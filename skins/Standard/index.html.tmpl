@@ -2,13 +2,14 @@
 ##
 ## Specifying an encoding of UTF-8 is usually safe, but if your text is 
 ## actually in Latin-1, then you should replace the string "UTF-8" with "latin-1"
+## If you do this, you should also change the 'Content-Type' metadata below.
 #encoding UTF-8
+##
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head profile="http://www.w3.org/2005/10/profile">
-    #if $encoding == 'utf8'
+    ## This choice should match the #encoding directive above
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    #end if    
     <title>$station.location Current Weather Conditions</title>
     <link rel="stylesheet" type="text/css" href="weewx.css"/>
     <link rel="icon" type="image/png" href="favicon.ico" />
@@ -84,12 +85,6 @@
                 <td class="stats_label">Inside Temperature</td>
                 <td class="stats_data">$current.inTemp</td>
               </tr>
-              #if $day.extraTemp1.has_data
-              <tr>
-                <td class="stats_label">Pond Temperature</td>
-                <td class="stats_data">$current.extraTemp1</td>
-              </tr>
-              #end if
               #if $day.UV.has_data
               <tr>
                 <td class="stats_label">UV</td>
@@ -224,18 +219,6 @@
                   $day.inTemp.min at $day.inTemp.mintime
                 </td>
               </tr>
-              #if $day.extraTemp1.has_data
-              <tr>
-                <td class="stats_label">
-                  High Pond Temperature<br/>
-                  Low Pond Temperature
-                </td>
-                <td class="stats_data">
-                  $day.extraTemp1.max at $day.extraTemp1.maxtime<br/>
-                  $day.extraTemp1.min at $day.extraTemp1.mintime
-                </td>
-              </tr>
-              #end if
               #if $day.UV.has_data
               <tr>
                 <td class="stats_label">
@@ -482,6 +465,7 @@
         <div id="plots">
           <img src="daytempdew.png"   alt="temperatures" />
           <img src="daytempchill.png" alt="heatchill" />
+          <img src="dayhumidity.png"  alt="outside humidity" />
           <img src="dayrain.png"      alt="rain" />
           <img src="daywind.png"      alt="wind" />
           <img src="daybarometer.png" alt="barometer"/>
@@ -496,9 +480,6 @@
           #end if
           #if $day.rxCheckPercent.has_data
           <img src="dayrx.png"        alt="day rx percent"/>
-          #end if
-          #if $day.extraTemp1.has_data
-          <img src="daypond.png"      alt="Pond Temperatures" />
           #end if
         </div> <!-- End id "plots" -->
       </div> <!-- End id "content" -->

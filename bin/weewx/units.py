@@ -15,6 +15,29 @@ import weewx
 import weeutil.weeutil
 from weeutil.weeutil import ListOfDicts
 
+# Handy conversion constants and functions:
+INHG_PER_MBAR  = 0.0295299875
+MM_PER_INCH    = 25.4
+CM_PER_INCH    = MM_PER_INCH / 10.0
+METER_PER_MILE = 1609.34
+METER_PER_FOOT = METER_PER_MILE / 5280.0
+MILE_PER_KM    = 1000.0 / METER_PER_MILE
+
+def CtoK(x):
+    return x + 273.15
+
+def CtoF(x):
+    return x * 1.8 + 32.0
+
+def FtoC(x):
+    return (x - 32.0) * 5.0 / 9.0
+
+def mps_to_mph(x):
+    return x * 3600.0 / METER_PER_MILE
+
+def kph_to_mph(x):
+    return x * 1000.0 / METER_PER_MILE
+
 class UnknownType(object):
     """Indicates that the observation type is unknown."""
     def __init__(self, obs_type):
@@ -32,12 +55,14 @@ unit_nicknames = {weewx.US       : 'US',
 # We start with a standard object group dictionary, but users are
 # free to extend it:
 obs_group_dict = ListOfDicts({"altitude"           : "group_altitude",
+                              "cloudbase"          : "group_altitude",
                               "cooldeg"            : "group_degree_day",
                               "heatdeg"            : "group_degree_day",
                               "gustdir"            : "group_direction",
                               "vecdir"             : "group_direction",
                               "windDir"            : "group_direction",
                               "windGustDir"        : "group_direction",
+                              "windrun"            : "group_distance",
                               "interval"           : "group_interval",
                               "soilMoist1"         : "group_moisture",
                               "soilMoist2"         : "group_moisture",
@@ -78,7 +103,9 @@ obs_group_dict = ListOfDicts({"altitude"           : "group_altitude",
                               "windvec"            : "group_speed",
                               "rms"                : "group_speed2",
                               "vecavg"             : "group_speed2",
+                              "appTemp"            : "group_temperature",
                               "dewpoint"           : "group_temperature",
+                              "inDewpoint"         : "group_temperature",
                               "extraTemp1"         : "group_temperature",
                               "extraTemp2"         : "group_temperature",
                               "extraTemp3"         : "group_temperature",
@@ -88,6 +115,7 @@ obs_group_dict = ListOfDicts({"altitude"           : "group_altitude",
                               "extraTemp7"         : "group_temperature",
                               "heatindex"          : "group_temperature",
                               "heatingTemp"        : "group_temperature",
+                              "humidex"            : "group_temperature",
                               "inTemp"             : "group_temperature",
                               "leafTemp1"          : "group_temperature",
                               "leafTemp2"          : "group_temperature",
@@ -106,9 +134,7 @@ obs_group_dict = ListOfDicts({"altitude"           : "group_altitude",
                               "consBatteryVoltage" : "group_volt",
                               "heatingVoltage"     : "group_volt",
                               "referenceVoltage"   : "group_volt",
-                              "supplyVoltage"      : "group_volt",
-                              "cloudbase"          : "group_altitude",
-                              "windrun"            : "group_distance"})
+                              "supplyVoltage"      : "group_volt"})
 
 # Some aggregations when applied to a type result in a different unit
 # group. This data structure maps aggregation type to the group:
@@ -121,6 +147,7 @@ agg_group = {'mintime'    : "group_time",
              'count'      : "group_count",
              'max_ge'     : "group_count",
              'max_le'     : "group_count",
+             'min_ge'     : "group_count",
              'min_le'     : "group_count",
              'sum_ge'     : "group_count",
              'vecdir'     : "group_direction",
@@ -129,13 +156,20 @@ agg_group = {'mintime'    : "group_time",
 # This dictionary maps unit groups to a standard unit type in the 
 # US customary unit system:
 USUnits = ListOfDicts({"group_altitude"    : "foot",
+                       "group_amp"         : "amp",
                        "group_count"       : "count",
+                       "group_data"        : "byte",
                        "group_degree_day"  : "degree_F_day",
+                       "group_deltatime"   : "second",
                        "group_direction"   : "degree_compass",
+                       "group_distance"    : "mile",
                        "group_elapsed"     : "second",
+                       "group_energy"      : "watt_hour",
                        "group_interval"    : "minute",
+                       "group_length"      : "inch",
                        "group_moisture"    : "centibar",
                        "group_percent"     : "percent",
+                       "group_power"       : "watt",
                        "group_pressure"    : "inHg",
                        "group_radiation"   : "watt_per_meter_squared",
                        "group_rain"        : "inch",
@@ -144,27 +178,27 @@ USUnits = ListOfDicts({"group_altitude"    : "foot",
                        "group_speed2"      : "mile_per_hour2",
                        "group_temperature" : "degree_F",
                        "group_time"        : "unix_epoch",
-                       "group_deltatime"   : "second",
                        "group_uv"          : "uv_index",
                        "group_volt"        : "volt",
-                       "group_amp"         : "amp",
-                       "group_power"       : "watt",
-                       "group_energy"      : "watt_hour",
-                       "group_volume"      : "gallon",
-                       "group_data"        : "byte",
-                       "group_distance"    : "mile",
-                       "group_length"      : "inch"})
+                       "group_volume"      : "gallon"})
 
 # This dictionary maps unit groups to a standard unit type in the 
 # metric unit system:
 MetricUnits = ListOfDicts({"group_altitude"    : "meter",
+                           "group_amp"         : "amp",
                            "group_count"       : "count",
+                           "group_data"        : "byte",
                            "group_degree_day"  : "degree_C_day",
+                           "group_deltatime"   : "second",
                            "group_direction"   : "degree_compass",
+                           "group_distance"    : "km",
                            "group_elapsed"     : "second",
+                           "group_energy"      : "watt_hour",
                            "group_interval"    : "minute",
+                           "group_length"      : "cm",
                            "group_moisture"    : "centibar",
                            "group_percent"     : "percent",
+                           "group_power"       : "watt",
                            "group_pressure"    : "mbar",
                            "group_radiation"   : "watt_per_meter_squared",
                            "group_rain"        : "cm",
@@ -173,16 +207,9 @@ MetricUnits = ListOfDicts({"group_altitude"    : "meter",
                            "group_speed2"      : "km_per_hour2",
                            "group_temperature" : "degree_C",
                            "group_time"        : "unix_epoch",
-                           "group_deltatime"   : "second",
                            "group_uv"          : "uv_index",
                            "group_volt"        : "volt",
-                           "group_amp"         : "amp",
-                           "group_power"       : "watt",
-                           "group_energy"      : "watt_hour",
-                           "group_volume"      : "litre",
-                           "group_data"        : "byte",
-                           "group_distance"    : "km",
-                           "group_length"      : "cm"})
+                           "group_volume"      : "litre"})
 
 # This dictionary maps unit groups to a standard unit type in the 
 # "Metric WX" unit system. It's the same as the "Metric" system,
@@ -196,10 +223,10 @@ MetricWXUnits['group_speed2']   = "meter_per_second2"
 
 # Conversion functions to go from one unit type to another.
 conversionDict = {
-      'inHg'             : {'mbar'             : lambda x : x * 33.86, 
-                            'hPa'              : lambda x : x * 33.86,
+      'inHg'             : {'mbar'             : lambda x : x / INHG_PER_MBAR, 
+                            'hPa'              : lambda x : x / INHG_PER_MBAR,
                             'mmHg'             : lambda x : x * 25.4},
-      'degree_F'         : {'degree_C'         : lambda x : (x-32.0) * (5.0/9.0)},
+      'degree_F'         : {'degree_C'         : FtoC},
       'degree_F_day'     : {'degree_C_day'     : lambda x : x * (5.0/9.0)},
       'mile_per_hour'    : {'km_per_hour'      : lambda x : x * 1.609344,
                             'knot'             : lambda x : x * 0.868976242,
@@ -215,24 +242,24 @@ conversionDict = {
                             'meter_per_second2': lambda x : x * 0.514444444},
       'inch_per_hour'    : {'cm_per_hour'      : lambda x : x * 2.54,
                             'mm_per_hour'      : lambda x : x * 25.4},
-      'inch'             : {'cm'               : lambda x : x * 2.54,
-                            'mm'               : lambda x : x * 25.4},
-      'foot'             : {'meter'            : lambda x : x * 0.3048},
-      'mmHg'             : {'inHg'             : lambda x : x / 25.4,
+      'inch'             : {'cm'               : lambda x : x * CM_PER_INCH,
+                            'mm'               : lambda x : x * MM_PER_INCH},
+      'foot'             : {'meter'            : lambda x : x * METER_PER_FOOT},
+      'mmHg'             : {'inHg'             : lambda x : x / MM_PER_INCH,
                             'mbar'             : lambda x : x / 0.75006168,
                             'hPa'              : lambda x : x / 0.75006168},
-      'mbar'             : {'inHg'             : lambda x : x / 33.86,
+      'mbar'             : {'inHg'             : lambda x : x * INHG_PER_MBAR,
                             'mmHg'             : lambda x : x * 0.75006168,
                             'hPa'              : lambda x : x * 1.0},
-      'hPa'              : {'inHg'             : lambda x : x / 33.86,
+      'hPa'              : {'inHg'             : lambda x : x * INHG_PER_MBAR,
                             'mmHg'             : lambda x : x * 0.75006168,
                             'mbar'             : lambda x : x * 1.0},
-      'degree_C'         : {'degree_F'         : lambda x : x * (9.0/5.0) + 32.0},
+      'degree_C'         : {'degree_F'         : CtoF},
       'degree_C_day'     : {'degree_F_day'     : lambda x : x * (9.0/5.0)},
-      'km_per_hour'      : {'mile_per_hour'    : lambda x : x * 0.621371192,
+      'km_per_hour'      : {'mile_per_hour'    : kph_to_mph,
                             'knot'             : lambda x : x * 0.539956803,
                             'meter_per_second' : lambda x : x * 0.277777778},
-      'meter_per_second' : {'mile_per_hour'    : lambda x : x * 2.23693629,
+      'meter_per_second' : {'mile_per_hour'    : mps_to_mph,
                             'knot'             : lambda x : x * 1.94384449,
                             'km_per_hour'      : lambda x : x * 3.6},
       'meter_per_second2': {'mile_per_hour2'   : lambda x : x * 2.23693629,
@@ -242,11 +269,11 @@ conversionDict = {
                             'mm_per_hour'      : lambda x : x * 10.0},
       'mm_per_hour'      : {'inch_per_hour'    : lambda x : x * .0393700787,
                             'cm_per_hour'      : lambda x : x * 0.10},
-      'cm'               : {'inch'             : lambda x : x * 0.393700787,
+      'cm'               : {'inch'             : lambda x : x / CM_PER_INCH,
                             'mm'               : lambda x : x * 10.0},
-      'mm'               : {'inch'             : lambda x : x * .0393700787,
+      'mm'               : {'inch'             : lambda x : x / MM_PER_INCH,
                             'cm'               : lambda x : x * 0.10},
-      'meter'            : {'foot'             : lambda x : x * 3.2808399 },
+      'meter'            : {'foot'             : lambda x : x / METER_PER_FOOT},
       'dublin_jd'        : {'unix_epoch'       : lambda x : (x-25567.5) * 86400.0},
       'unix_epoch'       : {'dublin_jd'        : lambda x : x/86400.0 + 25567.5},
       'second'           : {'hour'             : lambda x : x/3600.0,
@@ -559,12 +586,12 @@ class Formatter(object):
             return ''
 
         # Is the label a simple string? If so, return it
-        if isinstance(label, str):
+        if isinstance(label, basestring):
             return label
         else:
             # It is not a simple string. Assume it is a tuple or list
             # Return the singular, or plural, version as requested.
-            return label[plural]
+            return label[1] if plural else label[0]
 
     def toString(self, val_t, context='current', addLabel=True, 
                  useThisFormat=None, NONE_string=None, 
@@ -704,8 +731,8 @@ class Converter(object):
         Examples:
         >>> p_m = (1016.5, 'mbar', 'group_pressure')
         >>> c = Converter()
-        >>> print c.convert(p_m)
-        (30.020673360897813, 'inHg', 'group_pressure')
+        >>> print "%.3f %s %s" % c.convert(p_m)
+        30.017 inHg group_pressure
         
         Try an unspecified unit type:
         >>> p2 = (1016.5, None, None)
@@ -755,10 +782,12 @@ class Converter(object):
         >>> c = Converter()
         >>> # Source dictionary is in metric units
         >>> source_dict = {'dateTime': 194758100, 'outTemp': 20.0,\
-            'usUnits': weewx.METRIC, 'barometer':1015.8, 'interval':15}
+            'usUnits': weewx.METRIC, 'barometer':1015.9166, 'interval':15}
         >>> target_dict = c.convertDict(source_dict)
-        >>> print target_dict
-        {'outTemp': 68.0, 'interval': 15, 'barometer': 30.0, 'dateTime': 194758100}
+        >>> print "dateTime: %d, interval: %d, barometer: %.3f, outTemp: %.3f" %\
+        (target_dict['dateTime'], target_dict['interval'], \
+         target_dict['barometer'], target_dict['outTemp'])
+        dateTime: 194758100, interval: 15, barometer: 30.000, outTemp: 68.000
         """
         target_dict = {}
         for obs_type in obs_dict:
@@ -872,7 +901,7 @@ class ValueHelper(object):
         # Then do the format conversion:
         s = self.formatter.toString(vtx, self.context, addLabel=addLabel, 
                                     useThisFormat=useThisFormat, NONE_string=NONE_string, 
-                                    localize=True)
+                                    localize=localize)
         return s
         
     def __str__(self):
@@ -1077,7 +1106,7 @@ def convertStd(val_t, target_std_unit_system):
     Example:
     >>> value_t = (30.02, 'inHg', 'group_pressure')
     >>> print "(%.2f, %s, %s)" % convertStd(value_t, weewx.METRIC)
-    (1016.48, mbar, group_pressure)
+    (1016.59, mbar, group_pressure)
     >>> value_t = (1.2, 'inch', 'group_rain')
     >>> print "(%.2f, %s, %s)" % convertStd(value_t, weewx.METRICWX)
     (30.48, mm, group_rain)

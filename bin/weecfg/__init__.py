@@ -7,6 +7,7 @@
 
 from __future__ import with_statement
 
+import errno
 import glob
 import os.path
 import shutil
@@ -17,7 +18,7 @@ import tempfile
 import configobj
 
 import weeutil.weeutil
-from weewx.engine import all_service_groups
+from weewx import all_service_groups
 
 minor_comment_block = [""]
 major_comment_block = ["", "##############################################################################", ""]
@@ -61,8 +62,10 @@ canonical_order = ('',
  ('StdConvert', [], ['target_unit']), ('StdCalibrate', [('Corrections', [], [])], []), 
  ('StdQC', [('MinMax', [], ['barometer', 'outTemp', 'inTemp',
                             'outHumidity', 'inHumidity', 'windSpeed'])], []),
- ('StdWXCalculate', [], ['pressure', 'barometer', 'altimeter', 'windchill',
-                         'heatindex', 'dewpoint', 'inDewpoint', 'rainRate']), 
+ ('StdWXCalculate', [('Calculations', [], ['pressure', 'barometer', 'altimeter', 'windchill',
+                                           'heatindex', 'dewpoint', 'inDewpoint', 'rainRate']),
+                     ('Algorithms', [], ['altimeter', 'maxSolarRad'])],
+  ['ignore_zero_wind', 'rain_period', 'et_period', 'wind_height', 'atc', 'nfac', 'max_delta_12h']),
  ('StdTimeSynch', [], ['clock_check', 'max_drift']), 
  ('StdArchive', [], ['archive_interval', 'archive_delay', 'record_generation',
                      'loop_hilo', 'data_binding']), 
@@ -234,11 +237,11 @@ def save(config_dict, config_path, backup=False):
 
         # Now we can save the file. Get a temporary file:
         tmpfile = tempfile.NamedTemporaryFile("w")
-        
+
         # Write the configuration dictionary to it:
         config_dict.write(tmpfile)
         tmpfile.flush()
-    
+
         # Now move the temporary file into the proper place:
         shutil.copyfile(tmpfile.name, config_path)
 
@@ -256,6 +259,15 @@ def save(config_dict, config_path, backup=False):
 #==============================================================================
 
 def modify_config(config_dict, stn_info, logger, debug=False):
+    """If a driver has a configuration editor, then use that to insert the
+    stanza for the driver in the config_dict.  If there is no configuration
+    editor, then inject a generic configuration, i.e., just the driver name
+    with a single 'driver' element that points to the driver file.
+    """
+    driver_editor = None
+    driver_name = None
+    driver_version = None
+
     # Get the driver editor, name, and version:
     driver = stn_info.get('driver')
     if driver:
@@ -268,26 +280,35 @@ def modify_config(config_dict, stn_info, logger, debug=False):
         stn_info['station_type'] = driver_name
         if debug:
             logger.log('Using %s version %s (%s)' %
-                       (stn_info['station_type'], driver_version, driver),
-                       level=1)
+                       (driver_name, driver_version, driver), level=1)
 
     # Get a driver stanza, if possible
     stanza = None
-    if driver_editor is not None:
-        orig_stanza_text = None
+    if driver_name is not None:
+        if driver_editor is not None:
+            orig_stanza_text = None
 
-        # if a previous stanza exists for this driver, grab it
-        if driver_name in config_dict:
-            orig_stanza = configobj.ConfigObj(interpolation=False)
-            orig_stanza[driver_name] = config_dict[driver_name]
-            orig_stanza_text = '\n'.join(orig_stanza.write())
+            # if a previous stanza exists for this driver, grab it
+            if driver_name in config_dict:
+                orig_stanza = configobj.ConfigObj(interpolation=False)
+                orig_stanza[driver_name] = config_dict[driver_name]
+                orig_stanza_text = '\n'.join(orig_stanza.write())
 
-        # let the driver process the stanza or give us a new one
-        stanza_text = driver_editor.get_conf(orig_stanza_text)
-        stanza = configobj.ConfigObj(stanza_text.splitlines())
+            # let the driver process the stanza or give us a new one
+            stanza_text = driver_editor.get_conf(orig_stanza_text)
+            stanza = configobj.ConfigObj(stanza_text.splitlines())
+
+            # let the driver modify other parts of the configuration
+            driver_editor.modify_config(config_dict)
+        else:
+            stanza = configobj.ConfigObj(interpolation=False)
+            if driver_name in config_dict:
+                stanza[driver_name] = config_dict[driver_name]
+            else:
+                stanza[driver_name] = {}
 
     # If we have a stanza, inject it into the configuration dictionary
-    if stanza is not None:
+    if stanza is not None and driver_name is not None:
         # Ensure that the driver field matches the path to the actual driver
         stanza[driver_name]['driver'] = driver
         # Insert the stanza in the configuration dictionary:
@@ -313,7 +334,9 @@ def modify_config(config_dict, stn_info, logger, debug=False):
                     logger.log("Using %s for %s" % (stn_info[p], p), level=2)
                 config_dict['Station'][p] = stn_info[p]
         # Update units display with any stn_info overrides
-        if stn_info.get('units') is not None:
+        if (stn_info.get('units') is not None and
+            'StdReport' in config_dict and
+            'StandardReport' in config_dict['StdReport']):
             if stn_info.get('units') in ['metric', 'metricwx']:
                 if debug:
                     logger.log("Using Metric units for display", level=2)
@@ -352,7 +375,11 @@ def update_config(config_dict):
     # assume a very old version:
     config_version = config_dict.get('version') or '1.0.0'
 
-    major, minor, _ = config_version.split('.')
+    # Updates only care about the major and minor numbers
+    parts = config_version.split('.')
+    major = parts[0]
+    minor = parts[1]
+
     # Take care of the collation problem when comparing things like
     # version '1.9' to '1.10' by prepending a '0' to the former:
     if len(minor) < 2:
@@ -370,6 +397,8 @@ def update_config(config_dict):
         update_to_v30(config_dict)
         
     update_to_v32(config_dict)
+    
+    update_to_v36(config_dict)
 
 def merge_config(config_dict, template_dict):
     """Merge the configuration dictionary into the template dictionary,
@@ -658,8 +687,8 @@ def update_to_v32(config_dict):
         # symbol for WEEWX_ROOT does not get lost.
         save, config_dict.interpolation = config_dict.interpolation, False
         config_dict['DatabaseTypes'] = {
-            'SQLite' : {'driver': 'weedb.sqlite',
-                        'SQLITE_ROOT': '%(WEEWX_ROOT)s/archive'}}
+            'SQLite': {'driver': 'weedb.sqlite',
+                       'SQLITE_ROOT': '%(WEEWX_ROOT)s/archive'}}
         config_dict.interpolation = save
         try:
             root = config_dict['Databases']['archive_sqlite']['root']
@@ -709,13 +738,13 @@ def update_to_v32(config_dict):
             return
 
         # Now check to see whether it already has the option 'enable':
-        if c['StdRESTful'][service].has_key('enable'):
+        if 'enable' in c['StdRESTful'][service]:
             # It does. No need to proceed
             return
 
         # The option 'enable' is not present. Add it,
         # and set based on whether the keyword is present:
-        if c['StdRESTful'][service].has_key(keyword):
+        if keyword in c['StdRESTful'][service]:
             c['StdRESTful'][service]['enable'] = 'true'
         else:
             c['StdRESTful'][service]['enable'] = 'false'
@@ -728,6 +757,43 @@ def update_to_v32(config_dict):
     
     config_dict['version'] = '3.2.0'
         
+def update_to_v36(config_dict):
+    """Update a configuration file to V3.6"""
+    
+    # Perform the following only if the dictionary has a StdWXCalculate section
+    if config_dict.get('StdWXCalculate'):
+        # No need to update if it already has a 'Calculations' section:
+        if not config_dict['StdWXCalculate'].get('Calculations'):
+            # Save the comment attached to the first scalar
+            try:
+                first = config_dict['StdWXCalculate'].scalars[0]
+                comment = config_dict['StdWXCalculate'].comments[first]
+                config_dict['StdWXCalculate'].comments[first] = ''
+            except IndexError:
+                comment = """    # Derived quantities are calculated by this service. Possible values are:
+    #  hardware        - use the value provided by hardware
+    #  software        - use the value calculated by weewx
+    #  prefer_hardware - use value provide by hardware if available,
+    #                      otherwise use value calculated by weewx"""
+            # Create a new 'Calculations' section:
+            config_dict['StdWXCalculate']['Calculations'] = {}
+            # Now transfer over the options. Make a copy of them first: we will be 
+            # deleting some of them.
+            scalars = list(config_dict['StdWXCalculate'].scalars)
+            for scalar in scalars:
+                # These scalars don't get moved:
+                if not scalar in ['ignore_zero_wind', 'rain_period', 
+                                  'et_period', 'wind_height', 'atc', 
+                                  'nfac', 'max_delta_12h']:
+                    config_dict['StdWXCalculate']['Calculations'][scalar] = config_dict['StdWXCalculate'][scalar]
+                    config_dict['StdWXCalculate'].pop(scalar)
+            # Insert the old comment at the top of the new stanza:
+            try:
+                first = config_dict['StdWXCalculate']['Calculations'].scalars[0]
+                config_dict['StdWXCalculate']['Calculations'].comments[first] = comment
+            except IndexError:
+                pass
+
 def transfer_comments(config_dict, template_dict):
     
     # If this is the top-level, transfer the initial comments
@@ -822,7 +888,7 @@ def reorder_to_ref(config_dict, section_tuple=canonical_order):
     subsection_order = [x[0] for x in section_tuple[1]]
     # Reorder the subsections, then the scalars
     config_dict.sections = reorder(config_dict.sections, subsection_order)
-    config_dict.scalars  = reorder(config_dict.scalars, section_tuple[2])
+    config_dict.scalars = reorder(config_dict.scalars, section_tuple[2])
     
     # Now recursively go through each of my subsections,
     # allowing them to reorder their contents
@@ -846,14 +912,13 @@ def reorder(name_list, ref_list):
     for name in name_list:
         if name not in ref_list:
             result.append(name)
-            
     # Finally, add these, so they are at the very end
     for name in ref_list:
-        if name in ['FTP', 'RSYNC']:
+        if name in name_list and name in ['FTP', 'RSYNC']:
             result.append(name)
             
     # Make sure I have the same number I started with
-    assert(len(name_list)==len(result))
+    assert(len(name_list) == len(result))
     return result
     
 def remove_and_prune(a_dict, b_dict):
@@ -875,7 +940,7 @@ def prepend_path(a_dict, label, value):
         elif k == label:
             a_dict[k] = os.path.join(value, a_dict[k])
 
-#def replace_string(a_dict, label, value):
+# def replace_string(a_dict, label, value):
 #    for k in a_dict:
 #        if isinstance(a_dict[k], dict):
 #            replace_string(a_dict[k], label, value)
@@ -928,17 +993,17 @@ def get_driver_infos(driver_pkg_name='weewx.drivers', excludes=['__init__.py']):
                     if hasattr(driver_module, 'DRIVER_VERSION') else '?'
                 # Create an entry for it, keyed by the driver module name
                 driver_info_dict[driver_module_name] = {
-                    'module_name' : driver_module_name,
-                    'driver_name' : driver_module.DRIVER_NAME,
-                    'version'     : driver_module_version,
-                    'status'      : ''}
+                    'module_name': driver_module_name,
+                    'driver_name': driver_module.DRIVER_NAME,
+                    'version': driver_module_version,
+                    'status': ''}
         except ImportError, e:
             # If the import fails, report it in the status
             driver_info_dict[driver_module_name] = {
-                'module_name' : driver_module_name,
-                'driver_name' : '?',
-                'version'     : '?',
-                'status'      : e}
+                'module_name': driver_module_name,
+                'driver_name': '?',
+                'version': '?',
+                'status': e}
         except Exception, e:
             # Ignore anything else.  This might be a python file that is not
             # a driver, a python file with errors, or who knows what.
@@ -963,9 +1028,18 @@ def load_driver_editor(driver_module_name):
     """
     __import__(driver_module_name)
     driver_module = sys.modules[driver_module_name]
-    loader_function = getattr(driver_module, 'confeditor_loader')
-    editor = loader_function()
-    return editor, driver_module.DRIVER_NAME, driver_module.DRIVER_VERSION
+    editor = None
+    driver_name = None
+    driver_version = 'undefined'
+    if hasattr(driver_module, 'confeditor_loader'):
+        loader_function = getattr(driver_module, 'confeditor_loader')
+        editor = loader_function()
+    if hasattr(driver_module, 'DRIVER_NAME'):
+        driver_name = driver_module.DRIVER_NAME
+    if hasattr(driver_module, 'DRIVER_VERSION'):
+        driver_version = driver_module.DRIVER_VERSION
+    return editor, driver_name, driver_version
+
 
 #==============================================================================
 #                Utilities that seek info from the command line
@@ -1021,11 +1095,11 @@ def prompt_for_info(location=None, latitude='90.000', longitude='0.000',
     print "Indicate the preferred units for display: 'metric' or 'us'"
     uni = prompt_with_options("units", units, ['us', 'metric'])
 
-    return {'location' : loc,
-            'altitude' : alt,
-            'latitude' : lat,
+    return {'location': loc,
+            'altitude': alt,
+            'latitude': lat,
             'longitude': lon,
-            'units'    : uni}
+            'units': uni}
 
 
 def prompt_for_driver(dflt_driver=None):
@@ -1040,6 +1114,7 @@ def prompt_for_driver(dflt_driver=None):
         if dflt_driver == d:
             dflt_idx = i
     msg = "choose a driver [%d]: " % dflt_idx if dflt_idx is not None else "choose a driver: "
+    idx = 0
     ans = None
     while ans is None:
         ans = raw_input(msg).strip()
@@ -1054,13 +1129,17 @@ def prompt_for_driver(dflt_driver=None):
     return keys[idx]
 
 def prompt_for_driver_settings(driver):
-    """Let the driver prompt for any required settings."""
+    """Let the driver prompt for any required settings.  If the driver does
+    not define a method for prompting, return an empty dictionary."""
     settings = dict()
-    __import__(driver)
-    driver_module = sys.modules[driver]
-    loader_function = getattr(driver_module, 'confeditor_loader')
-    editor = loader_function()
-    settings[driver_module.DRIVER_NAME] = editor.prompt_for_settings()
+    try:
+        __import__(driver)
+        driver_module = sys.modules[driver]
+        loader_function = getattr(driver_module, 'confeditor_loader')
+        editor = loader_function()
+        settings[driver_module.DRIVER_NAME] = editor.prompt_for_settings()
+    except AttributeError:
+        pass
     return settings
 
 def prompt_with_options(prompt, default=None, options=None):
@@ -1125,8 +1204,8 @@ def prompt_with_limits(prompt, default=None, low_limit=None, high_limit=None):
 def extract_roots(config_path, config_dict, bin_root):
     """Get the location of the various root directories used by weewx."""
     
-    root_dict = {'WEEWX_ROOT' : config_dict['WEEWX_ROOT'],
-                 'CONFIG_ROOT' : os.path.dirname(config_path)}
+    root_dict = {'WEEWX_ROOT': config_dict['WEEWX_ROOT'],
+                 'CONFIG_ROOT': os.path.dirname(config_path)}
     # If bin_root has not been defined, then figure out where it is using
     # the location of this file:
     if bin_root:

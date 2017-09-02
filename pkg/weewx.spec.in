@@ -35,6 +35,7 @@
 %global dst_doc_dir %{_defaultdocdir}/%{name}-%{version}
 %global dst_cfg_dir %{_sysconfdir}/%{name}
 %global cfg_file    %{dst_cfg_dir}/weewx.conf
+%global dst_user_dir %{dst_bin_dir}/user
 
 Summary: weather software
 Name: weewx
@@ -70,12 +71,14 @@ mkdir -p %{buildroot}%{initdir}
 # copy files from the source tree
 cp -r bin/* %{buildroot}%{dst_bin_dir}
 cp -r docs/* %{buildroot}%{dst_doc_dir}
+cp -r examples %{buildroot}%{dst_doc_dir}
 cp -r skins %{buildroot}%{dst_cfg_dir}
 cp -r util/apache %{buildroot}%{dst_cfg_dir}
+cp -r util/import %{buildroot}%{dst_cfg_dir}
 cp -r util/logrotate.d %{buildroot}%{dst_cfg_dir}
 cp -r util/logwatch %{buildroot}%{dst_cfg_dir}
 cp -r util/rsyslog.d %{buildroot}%{dst_cfg_dir}
-cp -r extensions %{buildroot}%{dst_bin_dir}
+cp -r util/udev %{buildroot}%{dst_cfg_dir}
 
 # remove stuff that should not go out
 rm %{buildroot}%{dst_cfg_dir}/skins/Standard/backgrounds/butterfly.jpg
@@ -107,6 +110,7 @@ ln -s ../share/weewx/wee_database %{buildroot}%{_bindir}/wee_database
 ln -s ../share/weewx/wee_debug %{buildroot}%{_bindir}/wee_debug
 ln -s ../share/weewx/wee_device %{buildroot}%{_bindir}/wee_device
 ln -s ../share/weewx/wee_extension %{buildroot}%{_bindir}/wee_extension
+ln -s ../share/weewx/wee_import %{buildroot}%{_bindir}/wee_import
 ln -s ../share/weewx/wee_reports %{buildroot}%{_bindir}/wee_reports
 ln -s ../share/weewx/wunderfixer %{buildroot}%{_bindir}/wunderfixer
 
@@ -166,8 +170,10 @@ rm -rf %{buildroot}
 %{_bindir}/wee_debug
 %{_bindir}/wee_device
 %{_bindir}/wee_extension
+%{_bindir}/wee_import
 %{_bindir}/wee_reports
 %{_bindir}/wunderfixer
 %doc %{dst_doc_dir}/
 %config(noreplace) %{dst_cfg_dir}/
+%config(noreplace) %{dst_user_dir}/extensions.py
 %changelog

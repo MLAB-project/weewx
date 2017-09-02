@@ -11,7 +11,6 @@ from __future__ import with_statement
 import copy
 import optparse
 import os
-import os.path
 import platform
 import sys
 import syslog
@@ -20,43 +19,55 @@ from configobj import ConfigObj
 
 # weewx imports
 import weecfg
-import weewx
+import weedb
+import weewx.manager
+import weewx.units
 
 from weecfg.extension import ExtensionEngine
 from weeutil.weeutil import TimeSpan, timestamp_to_string
 from weewx.manager import DaySummaryManager
-from weewx.units import unit_nicknames
 
 VERSION = weewx.__version__
-WEE_DEBUG_VERSION = '0.5'
+WEE_DEBUG_VERSION = '0.6'
 
-# keys/setting names to obfuscate in weewx.conf, key value will be obfuscated if
-# the key starts any element in the list. Can add additional string elements to 
-# list if required
-KEYS_TO_OBFUSCATE = ["apiKey", "api_key", "app_key", "archive_security_key", 
-                     "id", "key", "oauth_token", "password", "raw_security_key",
-                     "server_url", "station", "token", "user"]
+# keys/setting names to obfuscate in weewx.conf, key value will be obfuscated
+# if the key starts any element in the list. Can add additional string elements
+# to list if required
+OBFUSCATE_MAP = {
+    "obfuscate": [
+        "apiKey", "api_key", "app_key", "archive_security_key", "id", "key",
+        "oauth_token", "password", "raw_security_key", "token", "user",
+        "server_url", "station"],
+    "do_not_obfuscate": [
+        "station_type"]
+    }
 
 # weewx archive field to use as the basis of counting number of archive records
-# Can be any field but dateTime is preferred as it should be in every weewx 
+# Can be any field but dateTime is preferred as it should be in every weewx
 # archive
 COUNT_FIELD = 'dateTime'
 
 # Redirect the import of setup (needed to get extension info)
 sys.modules['setup'] = weecfg.extension
 
-description = """Generate a standard suite of system/weewx information to aid
-in remote debugging. The wee_debug output consists of two parts, the first part
-containing a snapshot of relevant system/weewx information and the second part
-a parsed and obfuscated copy of weewx.conf. This output can be redirected to
-file and posted when seeking assistance via forums or email."""
-
 usage = """wee_debug --help
        wee_debug --info
+            [CONFIG_FILE|--config=CONFIG_FILE]
             [--output|--output DEBUG_PATH]
             [--verbosity=0|1|2]
        wee_debug --version
-"""
+
+Description:
+
+Generate a standard suite of system/weewx information to aid in remote
+debugging. The wee_debug output consists of two parts, the first part containing
+a snapshot of relevant system/weewx information and the second part a parsed and
+obfuscated copy of weewx.conf. This output can be redirected to file and posted
+when seeking assistance via forums or email.
+
+Actions:
+
+--info           Generate a debug report."""
 
 epilog = """wee_debug will attempt to obfuscate obvious personal/private
 information in weewx.conf such as user names, passwords and API keys; however,
@@ -69,11 +80,13 @@ def main():
     syslog.openlog('wee_debug', syslog.LOG_PID|syslog.LOG_CONS)
 
     # Create a command line parser:
-    parser = optparse.OptionParser(description = description,
-                                   usage = usage,
+    parser = optparse.OptionParser(usage = usage,
                                    epilog = epilog)
 
     # Add the various options:
+    parser.add_option("--config", dest="config_path", type=str,
+                      metavar="CONFIG_FILE",
+                      help="Use configuration file CONFIG_FILE.")
     parser.add_option("--info", dest="info", action='store_true',
                       help="Generate weewx debug output.")
     parser.add_option('--output', action='callback',
@@ -89,7 +102,7 @@ def main():
                       help='Display wee_debug version number.')
 
     # Now we are ready to parse the command line:
-    (options, args) = parser.parse_args()
+    (options, args) = parser.parse_args()  # @UnusedVariable
 
     # check weewx version number for compatibility
     if VERSION[0] < 3:
@@ -98,6 +111,9 @@ def main():
             VERSION
         print "Nothing done, exiting."
         exit(1)
+
+    # get config_dict to use
+    config_path, config_dict = weecfg.read_config(options.config_path, args)
 
     # display wee_debug version info
     if options.version:
@@ -122,7 +138,6 @@ def main():
         print
 
         # get some key weewx parameters
-        config_path, config_dict = weecfg.read_config(None, [])
         db_binding_wx = get_binding(config_dict)
         database_wx = config_dict['DataBindings'][db_binding_wx]['database']
 
@@ -169,7 +184,7 @@ def optional_arg(arg_default):
         http://stackoverflow.com/questions/1229146/parsing-empty-options-in-python
     """
 
-    def func(option, opt_str, value, parser):
+    def func(option, opt_str, value, parser):  # @UnusedVariable
         if parser.rargs and not parser.rargs[0].startswith('-'):
             val = parser.rargs[0]
             parser.rargs.pop(0)
@@ -221,35 +236,44 @@ def generateDebugInfo(config_dict, config_path, db_binding_wx, verbosity):
     print
 
     # weewx archive info
-    manager_info_dict = getManagerInfo(config_dict, db_binding_wx)
-    if manager_info_dict['units'] in weewx.units.unit_nicknames:
-        units_nickname = weewx.units.unit_nicknames[manager_info_dict['units']]
+    try:
+        manager_info_dict = getManagerInfo(config_dict, db_binding_wx)
+    except weedb.CannotConnect, e:
+        print "Unable to connect to database:", e
+        print
+    except weedb.OperationalError, e:
+        print "Error hitting database. It may not be properly initialized:"
+        print e
+        print
     else:
-        units_nickname = "Unknown unit constant"
-    print "Archive info"
-    print "  Database name:        %s" % manager_info_dict['db_name']
-    print "  Table name:           %s" % manager_info_dict['table_name']
-    print "  Unit system:          %s (%s)" % (manager_info_dict['units'],
-                                              units_nickname)
-    print "  First good timestamp: %s" % timestamp_to_string(manager_info_dict['first_ts'])
-    print "  Last good timestamp:  %s" % timestamp_to_string(manager_info_dict['last_ts'])
-    if manager_info_dict['ts_count']:
-        print "  Number of records:    %s" % manager_info_dict['ts_count'].value
-    else:
-        print "  Number of records:    %s (no archive records found)" % \
-            manager_info_dict['ts_count']
-    # if we have a database and a table but no start or stop ts and no records
-    # inform the user that the database/table exists but appears empty
-    if (manager_info_dict['db_name'] and manager_info_dict['table_name']) and \
-    not (manager_info_dict['ts_count'] or manager_info_dict['units'] or \
-    manager_info_dict['first_ts'] or manager_info_dict['last_ts']):
-        print "                        It is likely that the database (%s) archive table (%s)" % \
-            (manager_info_dict['db_name'], manager_info_dict['table_name'])
-        print "                        exists but contains no data."
-    print "  weewx (weewx.conf) is set to use an archive interval of %s seconds." % \
-        config_dict['StdArchive']['archive_interval']
-    print "  The station hardware was not interrogated in determining archive interval."
-    print
+        if manager_info_dict['units'] in weewx.units.unit_nicknames:
+            units_nickname = weewx.units.unit_nicknames[manager_info_dict['units']]
+        else:
+            units_nickname = "Unknown unit constant"
+        print "Archive info"
+        print "  Database name:        %s" % manager_info_dict['db_name']
+        print "  Table name:           %s" % manager_info_dict['table_name']
+        print "  Unit system:          %s (%s)" % (manager_info_dict['units'],
+                                                  units_nickname)
+        print "  First good timestamp: %s" % timestamp_to_string(manager_info_dict['first_ts'])
+        print "  Last good timestamp:  %s" % timestamp_to_string(manager_info_dict['last_ts'])
+        if manager_info_dict['ts_count']:
+            print "  Number of records:    %s" % manager_info_dict['ts_count'].value
+        else:
+            print "  Number of records:    %s (no archive records found)" % \
+                manager_info_dict['ts_count']
+        # if we have a database and a table but no start or stop ts and no records
+        # inform the user that the database/table exists but appears empty
+        if (manager_info_dict['db_name'] and manager_info_dict['table_name']) and \
+        not (manager_info_dict['ts_count'] or manager_info_dict['units'] or \
+        manager_info_dict['first_ts'] or manager_info_dict['last_ts']):
+            print "                        It is likely that the database (%s) archive table (%s)" % \
+                (manager_info_dict['db_name'], manager_info_dict['table_name'])
+            print "                        exists but contains no data."
+        print "  weewx (weewx.conf) is set to use an archive interval of %s seconds." % \
+            config_dict['StdArchive']['archive_interval']
+        print "  The station hardware was not interrogated in determining archive interval."
+        print
 
     # weewx database info
     if verbosity > 0:
@@ -257,7 +281,7 @@ def generateDebugInfo(config_dict, config_path, db_binding_wx, verbosity):
         for db_keys in config_dict['Databases']:
             database_dict = weewx.manager.get_database_dict_from_config(config_dict,
                                                                         db_keys)
-            keys = sorted(database_dict.keys())
+            _ = sorted(database_dict.keys())
             print "  Database name:        %s" % database_dict['database_name']
             print "  Database driver:      %s" % database_dict['driver']
             if 'host' in database_dict:
@@ -277,7 +301,9 @@ def generateDebugConf(config_dict):
     """ Generate a parsed and obfuscated weewx.conf and write to sys.stdout """
 
     # obfuscate config_dict
-    _obs_config_dict = obfuscateKey(config_dict, KEYS_TO_OBFUSCATE)
+    _obs_config_dict = obfuscateKey(config_dict,
+                                    OBFUSCATE_MAP['obfuscate'],
+                                    OBFUSCATE_MAP['do_not_obfuscate'])
     # put obfuscated config_dict into weewx.conf form
     _obs_config_dict.write(sys.stdout)
 
@@ -298,12 +324,12 @@ def generateLinuxSysInfo(verbosity):
     # load info
     if verbosity > 0:
         loadstr = _readproc_line('/proc/loadavg')
-        (load1, load5, load15, nproc) = loadstr.split()[0:4]
+        (load1, load5, load15, nproc) = loadstr.split()[0:4]  # @UnusedVariable
         print "  1 minute load average:  %s" % load1
         print "  5 minute load average:  %s" % load5
         print "  15 minute load average: %s" % load15
 
-def obfuscateKey(src_dict, key_list):
+def obfuscateKey(src_dict, obfuscate_list, retain_list):
     """ Obfuscate any dictionary items whose key is contained in passed list.
         Uses recursion to obfuscate any nested keys.
     """
@@ -314,10 +340,11 @@ def obfuscateKey(src_dict, key_list):
     for k, v in src_dict.items():
         # if its a dict then recurse
         if isinstance(v, dict):
-            _dict[k] = obfuscateKey(v, key_list)
+            _dict[k] = obfuscateKey(v, obfuscate_list, retain_list)
         # must be a value so obfuscate if in our list or leave it if its not
         else:
-            if any(k.startswith(key) for key in key_list):
+            if (any(k.startswith(key) for key in obfuscate_list)
+                and not k in retain_list):
                 _dict[k] = "XXX obfuscated by wee_debug XXX"
             else:
                 _dict[k] = v
@@ -349,9 +376,9 @@ def getManagerInfo(config_dict, db_binding_wx):
         # do we have any records in our archive?
         if first_ts and last_ts:
             # We have some records so proceed to count them.
-            # Since we are (more than likely) using archive field 'dateTime' for 
-            # our record count we need to call the getAggregate() method from our 
-            # parent class. Note that if we change to some other field the 'count' 
+            # Since we are (more than likely) using archive field 'dateTime' for
+            # our record count we need to call the getAggregate() method from our
+            # parent class. Note that if we change to some other field the 'count'
             # might take a while longer depending on the archive size.
             ts_count = super(DaySummaryManager, dbmanager_wx).getAggregate(TimeSpan(first_ts, last_ts),
                                                               COUNT_FIELD,
@@ -384,7 +411,6 @@ def _readproc_dict(filename):
 def _readproc_line(filename):
     """ Read single line proc file, return the string """
 
-    info = ''
     with open(filename) as fp:
         info = fp.read()
     return info

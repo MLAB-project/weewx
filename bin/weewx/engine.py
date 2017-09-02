@@ -8,6 +8,7 @@
 
 # Python imports
 import gc
+import locale
 import os.path
 import platform
 import signal
@@ -25,10 +26,11 @@ import daemon
 import weedb
 import weewx.accum
 import weewx.manager
+import weewx.qc
 import weewx.station
 import weewx.reportengine
 import weeutil.weeutil
-from weeutil.weeutil import to_bool, to_int
+from weeutil.weeutil import to_bool, to_int, to_sorted_string
 from weewx import all_service_groups
 
 class BreakLoop(Exception):
@@ -60,7 +62,7 @@ class StdEngine(object):
         socket.setdefaulttimeout(timeout)
         
         # Default garbage collection is every 3 hours:
-        self.gc_interval = int(config_dict.get('gc_interval', 3*3600))
+        self.gc_interval = int(config_dict.get('gc_interval', 3 * 3600))
 
         # Set up the callback dictionary:
         self.callbacks = dict()
@@ -86,7 +88,8 @@ class StdEngine(object):
         # Find the driver name for this type of hardware
         driver = config_dict[stationType]['driver']
         
-        syslog.syslog(syslog.LOG_INFO, "engine: Loading station type %s (%s)" % (stationType, driver))
+        syslog.syslog(syslog.LOG_INFO, "engine: Loading station type %s (%s)" %
+                      (stationType, driver))
 
         # Import the driver:
         __import__(driver)
@@ -102,6 +105,8 @@ class StdEngine(object):
             # Call it with the configuration dictionary as the only argument:
             self.console = loader_function(config_dict, self)
         except Exception, ex:
+            syslog.syslog(syslog.LOG_ERR,
+                          "import of driver failed: %s (%s)" % (ex, type(ex)))
             # Signal that we have an initialization error:
             raise InitializationError(ex)
         
@@ -256,7 +261,7 @@ class StdEngine(object):
         try:
             return self.console.getTime()
         except NotImplementedError:
-            return int(time.time()+0.5)
+            return int(time.time() + 0.5)
 
 #==============================================================================
 #                    Class StdService
@@ -310,7 +315,8 @@ class StdConvert(StdService):
         """Do unit conversions for a LOOP packet"""
         # No need to do anything if the packet is already in the target
         # unit system
-        if event.packet['usUnits'] == self.target_unit: return
+        if event.packet['usUnits'] == self.target_unit:
+            return
         # Perform the conversion
         converted_packet = self.converter.convertDict(event.packet)
         # Add the new unit system
@@ -322,7 +328,8 @@ class StdConvert(StdService):
         """Do unit conversions for an archive record."""
         # No need to do anything if the record is already in the target
         # unit system
-        if event.record['usUnits'] == self.target_unit: return
+        if event.record['usUnits'] == self.target_unit:
+            return
         # Perform the conversion
         converted_record = self.converter.convertDict(event.record)
         # Add the new unit system
@@ -364,9 +371,10 @@ class StdCalibrate(StdService):
     def new_loop_packet(self, event):
         """Apply a calibration correction to a LOOP packet"""
         for obs_type in self.corrections:
+            if obs_type == 'foo': continue
             try:
                 event.packet[obs_type] = eval(self.corrections[obs_type], None, event.packet)
-            except (TypeError, NameError):
+            except (TypeError, NameError), e:
                 pass
             except ValueError, e:
                 syslog.syslog(syslog.LOG_ERR, "engine: StdCalibration loop error %s" % e)
@@ -377,9 +385,10 @@ class StdCalibrate(StdService):
         # already been applied in the LOOP packet.
         if event.origin != 'software':
             for obs_type in self.corrections:
+                if obs_type == 'foo': continue
                 try:
                     event.record[obs_type] = eval(self.corrections[obs_type], None, event.record)
-                except (TypeError, NameError):
+                except (TypeError, NameError), e:
                     pass
                 except ValueError, e:
                     syslog.syslog(syslog.LOG_ERR, "engine: StdCalibration archive error %s" % e)
@@ -389,61 +398,31 @@ class StdCalibrate(StdService):
 #==============================================================================
 
 class StdQC(StdService):
-    """Performs quality check on incoming data."""
+    """Service that performs quality check on incoming data.
 
+    A StdService wrapper for a QC object so it may be called as a service. This 
+    also allows the weewx.qc.QC class to be used elsewhere without the 
+    overheads of running it as a weewx service.
+    """
+    
     def __init__(self, engine, config_dict):
         super(StdQC, self).__init__(engine, config_dict)
 
-        # If the 'StdQC' or 'MinMax' sections do not exist in the configuration
-        # dictionary, then an exception will get thrown and nothing will be
-        # done.
-        try:
-            mm_dict = config_dict['StdQC']['MinMax']
-        except KeyError:
-            syslog.syslog(syslog.LOG_NOTICE, "engine: No QC information in config file.")
-            return
-
-        self.min_max_dict = {}
-
-        target_unit_name = config_dict['StdConvert']['target_unit']
-        target_unit = weewx.units.unit_constants[target_unit_name.upper()]
-        converter = weewx.units.StdUnitConverters[target_unit]
-
-        for obs_type in mm_dict.scalars:
-            minval = float(mm_dict[obs_type][0])
-            maxval = float(mm_dict[obs_type][1])
-            if len(mm_dict[obs_type]) == 3:
-                group = weewx.units._getUnitGroup(obs_type)
-                vt = (minval, mm_dict[obs_type][2], group)
-                minval = converter.convert(vt)[0]
-                vt = (maxval, mm_dict[obs_type][2], group)
-                maxval = converter.convert(vt)[0]
-            self.min_max_dict[obs_type] = (minval, maxval)
+        # Get a QC object to apply the QC checks to our data
+        self.qc = weewx.qc.QC(config_dict)
         
         self.bind(weewx.NEW_LOOP_PACKET, self.new_loop_packet)
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
         
     def new_loop_packet(self, event):
-        """Apply quality check to the data in a LOOP packet"""
-        for obs_type in self.min_max_dict:
-            if event.packet.has_key(obs_type) and event.packet[obs_type] is not None:
-                if not self.min_max_dict[obs_type][0] <= event.packet[obs_type] <= self.min_max_dict[obs_type][1]:
-                    syslog.syslog(syslog.LOG_NOTICE, "engine: %s LOOP value '%s' %s outside limits (%s, %s)" % 
-                                  (weeutil.weeutil.timestamp_to_string(event.packet['dateTime']), 
-                                   obs_type, event.packet[obs_type], 
-                                   self.min_max_dict[obs_type][0], self.min_max_dict[obs_type][1]))
-                    event.packet[obs_type] = None
+        """Apply quality check to the data in a loop packet"""
+        
+        self.qc.apply_qc(event.packet, 'LOOP')
 
     def new_archive_record(self, event):
-        """Apply quality check to the data in an archive packet"""
-        for obs_type in self.min_max_dict:
-            if event.record.has_key(obs_type) and event.record[obs_type] is not None:
-                if not self.min_max_dict[obs_type][0] <= event.record[obs_type] <= self.min_max_dict[obs_type][1]:
-                    syslog.syslog(syslog.LOG_NOTICE, "engine: %s Archive value '%s' %s outside limits (%s, %s)" % 
-                                  (weeutil.weeutil.timestamp_to_string(event.record['dateTime']),
-                                   obs_type, event.record[obs_type], 
-                                   self.min_max_dict[obs_type][0], self.min_max_dict[obs_type][1]))
-                    event.record[obs_type] = None
+        """Apply quality check to the data in an archive record"""
+        
+        self.qc.apply_qc(event.record, 'Archive')
 
 #==============================================================================
 #                    Class StdArchive
@@ -461,17 +440,19 @@ class StdArchive(StdService):
 
         # Extract the various options from the config file. If it's missing, fill in with defaults:
         if 'StdArchive' in config_dict:
-            self.data_binding      = config_dict['StdArchive'].get('data_binding', 'wx_binding')
+            self.data_binding = config_dict['StdArchive'].get('data_binding', 'wx_binding')
             self.record_generation = config_dict['StdArchive'].get('record_generation', 'hardware').lower()
             self.archive_delay = to_int(config_dict['StdArchive'].get('archive_delay', 15))
-            software_interval  = to_int(config_dict['StdArchive'].get('archive_interval', 300))
-            self.loop_hilo     = to_bool(config_dict['StdArchive'].get('loop_hilo', True))
+            software_interval = to_int(config_dict['StdArchive'].get('archive_interval', 300))
+            self.loop_hilo = to_bool(config_dict['StdArchive'].get('loop_hilo', True))
+            self.record_augmentation = to_bool(config_dict['StdArchive'].get('record_augmentation', True))
         else:
             self.data_binding = 'wx_binding'
             self.record_generation = 'hardware'
             self.archive_delay = 15
             software_interval = 300
             self.loop_hilo = True
+            self.record_augmentation = True
             
         syslog.syslog(syslog.LOG_INFO, "engine: Archive will use data binding %s" % self.data_binding)
         
@@ -480,6 +461,7 @@ class StdArchive(StdService):
 
         # If the station supports a hardware archive interval, use that.
         # Warn if it is different than what is in config.
+        ival_msg = ''
         try:
             if software_interval != self.engine.console.archive_interval:
                 syslog.syslog(syslog.LOG_ERR,
@@ -489,28 +471,35 @@ class StdArchive(StdService):
                               (software_interval,
                                self.engine.console.archive_interval))
             self.archive_interval = self.engine.console.archive_interval
+            ival_msg = "(specified by hardware)"
         except NotImplementedError:
             self.archive_interval = software_interval
-        syslog.syslog(syslog.LOG_INFO, "engine: Using archive interval of %d seconds" % 
-                      self.archive_interval)
+            ival_msg = "(specified in weewx configuration)"
+        syslog.syslog(syslog.LOG_INFO, "engine: Using archive interval of %d seconds %s" %
+                      (self.archive_interval, ival_msg))
 
         if self.archive_delay <= 0:
             raise weewx.ViolatedPrecondition("Archive delay (%.1f) must be greater than zero." % 
                                              (self.archive_delay,))
+        if self.archive_delay >= self.archive_interval / 2:
+            syslog.syslog(syslog.LOG_WARNING, "engine: Archive delay (%d) is unusually long" % 
+                          (self.archive_delay,))
 
         syslog.syslog(syslog.LOG_DEBUG, "engine: Use LOOP data in hi/low calculations: %d" % 
                       (self.loop_hilo,))
         
         self.setup_database(config_dict)
-        
-        self.bind(weewx.STARTUP,            self.startup)
-        self.bind(weewx.PRE_LOOP,           self.pre_loop)
-        self.bind(weewx.POST_LOOP,          self.post_loop)
-        self.bind(weewx.CHECK_LOOP,         self.check_loop)
-        self.bind(weewx.NEW_LOOP_PACKET,    self.new_loop_packet)
+        weewx.accum.initialize(config_dict)
+        self.old_accumulator = None
+
+        self.bind(weewx.STARTUP, self.startup)
+        self.bind(weewx.PRE_LOOP, self.pre_loop)
+        self.bind(weewx.POST_LOOP, self.post_loop)
+        self.bind(weewx.CHECK_LOOP, self.check_loop)
+        self.bind(weewx.NEW_LOOP_PACKET, self.new_loop_packet)
         self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
     
-    def startup(self, event):
+    def startup(self, event):  # @UnusedVariable
         """Called when the engine is starting up."""
         # The engine is starting up. The main task is to do a catch up on any
         # data still on the station, but not yet put in the database. Not
@@ -520,7 +509,7 @@ class StdArchive(StdService):
         except NotImplementedError:
             pass
                     
-    def pre_loop(self, event):
+    def pre_loop(self, event):  # @UnusedVariable
         """Called before the main packet loop is entered."""
         
         # If this the the initial time through the loop, then the end of
@@ -533,22 +522,20 @@ class StdArchive(StdService):
     def new_loop_packet(self, event):
         """Called when A new LOOP record has arrived."""
         
-        the_time = event.packet['dateTime']
-        
         # Do we have an accumulator at all? If not, create one:
         if not hasattr(self, "accumulator"):
-            self.accumulator = self._new_accumulator(the_time)
+            self.accumulator = self._new_accumulator(event.packet['dateTime'])
 
         # Try adding the LOOP packet to the existing accumulator. If the
         # timestamp is outside the timespan of the accumulator, an exception
         # will be thrown:
         try:
-            self.accumulator.addRecord(event.packet, self.loop_hilo)
+            self.accumulator.addRecord(event.packet, add_hilo=self.loop_hilo)
         except weewx.accum.OutOfSpan:
             # Shuffle accumulators:
-            (self.old_accumulator, self.accumulator) = (self.accumulator, self._new_accumulator(the_time))
-            # Add the LOOP packet to the new accumulator:
-            self.accumulator.addRecord(event.packet, self.loop_hilo)
+            (self.old_accumulator, self.accumulator) = (self.accumulator, self._new_accumulator(event.packet['dateTime']))
+            # Try again:
+            self.accumulator.addRecord(event.packet, add_hilo=self.loop_hilo)
 
     def check_loop(self, event):
         """Called after any loop packets have been processed. This is the opportunity
@@ -563,14 +550,12 @@ class StdArchive(StdService):
         if event.packet['dateTime'] >= self.end_archive_delay_ts:
             raise BreakLoop
 
-    def post_loop(self, event):
+    def post_loop(self, event):  # @UnusedVariable
         """The main packet loop has ended, so process the old accumulator."""
-        # If we happen to startup in the small time interval between the end of
+        # If weewx happens to startup in the small time interval between the end of
         # the archive interval and the end of the archive delay period, then
-        # there will be no old accumulator.
-        dbmanager = self.engine.db_binder.get_manager(self.data_binding)
-        if hasattr(self, 'old_accumulator'):
-            dbmanager.updateHiLo(self.old_accumulator)
+        # there will be no old accumulator. Check for this.
+        if self.old_accumulator:
             # If the user has requested software generation, then do that:
             if self.record_generation == 'software':
                 self._software_catchup()
@@ -584,6 +569,7 @@ class StdArchive(StdService):
                     self._software_catchup()
             else:
                 raise ValueError("Unknown station record generation value %s" % self.record_generation)
+            self.old_accumulator = None
 
         # Set the time of the next break loop:
         self.end_archive_delay_ts = self.end_archive_period_ts + self.archive_delay
@@ -591,10 +577,17 @@ class StdArchive(StdService):
     def new_archive_record(self, event):
         """Called when a new archive record has arrived. 
         Put it in the archive database."""
-        dbmanager = self.engine.db_binder.get_manager(self.data_binding)
-        dbmanager.addRecord(event.record)
 
-    def setup_database(self, config_dict):
+        # If requested, extract any extra information we can out of the 
+        # accumulator and put it in the record.
+        if self.record_augmentation and self.old_accumulator \
+                and event.record['dateTime'] == self.old_accumulator.timespan.stop:
+            self.old_accumulator.augmentRecord(event.record)
+
+        dbmanager = self.engine.db_binder.get_manager(self.data_binding)
+        dbmanager.addRecord(event.record, accumulator=self.old_accumulator)
+
+    def setup_database(self, config_dict):  # @UnusedVariable
         """Setup the main database archive"""
 
         # This will create the database if it doesn't exist, then return an
@@ -602,19 +595,14 @@ class StdArchive(StdService):
         dbmanager = self.engine.db_binder.get_manager(self.data_binding, initialize=True)
         syslog.syslog(syslog.LOG_INFO, "engine: Using binding '%s' to database '%s'" % (self.data_binding, dbmanager.database_name))
         
+        # Make sure the daily summaries have not been partially updated
+        if dbmanager._read_metadata('lastWeightPatch'):
+            raise weewx.ViolatedPrecondition("engine: Update of daily summary for database '%s' not complete. "
+                                             "Finish the update first." % dbmanager.database_name)
+        
         # Back fill the daily summaries.
-        syslog.syslog(syslog.LOG_INFO, "engine: Starting backfill of daily summaries")
-        t1 = time.time()
-        nrecs, ndays = dbmanager.backfill_day_summary()
-        tdiff = time.time() - t1
-        if nrecs:
-            syslog.syslog(syslog.LOG_INFO, 
-                          "engine: Processed %d records to backfill %d day summaries in %.2f seconds" % (nrecs, ndays, tdiff))
-        else:
-            syslog.syslog(syslog.LOG_INFO,
-                          "engine: Daily summaries up to date.")
-    
-
+        _nrecs, _ndays = dbmanager.backfill_day_summary() # @UnusedVariable
+        
     def _catchup(self, generator):
         """Pull any unarchived records off the console and archive them.
         
@@ -650,7 +638,7 @@ class StdArchive(StdService):
         end_ts = start_ts + self.archive_interval
         
         # Instantiate a new accumulator
-        new_accumulator =  weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_ts, end_ts))
+        new_accumulator = weewx.accum.Accum(weeutil.weeutil.TimeSpan(start_ts, end_ts))
         return new_accumulator
     
 #==============================================================================
@@ -666,16 +654,16 @@ class StdTimeSynch(StdService):
         # Zero out the time of last synch, and get the time between synchs.
         self.last_synch_ts = 0
         self.clock_check = int(config_dict['StdTimeSynch'].get('clock_check', 14400))
-        self.max_drift   = int(config_dict['StdTimeSynch'].get('max_drift', 5))
+        self.max_drift = int(config_dict['StdTimeSynch'].get('max_drift', 5))
         
-        self.bind(weewx.STARTUP,  self.startup)
+        self.bind(weewx.STARTUP, self.startup)
         self.bind(weewx.PRE_LOOP, self.pre_loop)
     
-    def startup(self, event):
+    def startup(self, event): # @UnusedVariable
         """Called when the engine is starting up."""
         self.do_sync()
         
-    def pre_loop(self, event):
+    def pre_loop(self, event): # @UnusedVariable
         """Called before the main event loop is started."""
         self.do_sync()
         
@@ -688,7 +676,8 @@ class StdTimeSynch(StdService):
             self.last_synch_ts = now_ts
             try:
                 console_time = self.engine.console.getTime()
-                if console_time is None: return
+                if console_time is None:
+                    return
                 # getTime can take a long time to run, so we use the current
                 # system time
                 diff = console_time - time.time()
@@ -718,18 +707,13 @@ class StdPrint(StdService):
         
     def new_loop_packet(self, event):
         """Print out the new LOOP packet"""
-        print "LOOP:  ", weeutil.weeutil.timestamp_to_string(event.packet['dateTime']), StdPrint.sort(event.packet)
+        print "LOOP:  ", weeutil.weeutil.timestamp_to_string(event.packet['dateTime']), to_sorted_string(event.packet)
     
     def new_archive_record(self, event):
         """Print out the new archive record."""
-        print "REC:   ", weeutil.weeutil.timestamp_to_string(event.record['dateTime']), StdPrint.sort(event.record)
-       
-    @staticmethod 
-    def sort(rec):
-        return ", ".join(["%s: %s" % (k, rec.get(k)) for k in sorted(rec, key=str.lower)])
-            
-        
-        
+        print "REC:   ", weeutil.weeutil.timestamp_to_string(event.record['dateTime']), to_sorted_string(event.record)
+
+
 #==============================================================================
 #                    Class StdReport
 #==============================================================================
@@ -739,24 +723,41 @@ class StdReport(StdService):
     
     def __init__(self, engine, config_dict):
         super(StdReport, self).__init__(engine, config_dict)
-        self.max_wait    = int(config_dict['StdReport'].get('max_wait', 60))
-        self.thread      = None
+        self.max_wait = int(config_dict['StdReport'].get('max_wait', 600))
+        self.thread = None
         self.launch_time = None
+        self.record = None
         
+        self.bind(weewx.NEW_ARCHIVE_RECORD, self.new_archive_record)
         self.bind(weewx.POST_LOOP, self.launch_report_thread)
         
-    def launch_report_thread(self, event):
+    def new_archive_record(self, event):
+        """Cache the archive record to pass to the report thread."""
+        self.record = event.record
+    
+    def launch_report_thread(self, event):  # @UnusedVariable
         """Called after the packet LOOP. Processes any new data."""
         # Do not launch the reporting thread if an old one is still alive.
         # To guard against a zombie thread (alive, but doing nothing) launch
         # anyway if enough time has passed.
-        if self.thread and self.thread.isAlive() and time.time()-self.launch_time < self.max_wait:
-            return
+        if self.thread and self.thread.isAlive():
+            thread_age = time.time() - self.launch_time
+            if thread_age < self.max_wait:
+                syslog.syslog(syslog.LOG_INFO,
+                              "engine: Launch of report thread aborted: "
+                              "existing report thread still running")
+                return
+            else:
+                syslog.syslog(syslog.LOG_WARNING,
+                              "engine: Previous report thread has been running"
+                              " %s seconds.  Launching report thread anyway."
+                              % thread_age)
             
         try:
             self.thread = weewx.reportengine.StdReportEngine(self.config_dict,
                                                              self.engine.stn_info,
-                                                             first_run= not self.launch_time) 
+                                                             self.record,
+                                                             first_run=not self.launch_time)
             self.thread.start()
             self.launch_time = time.time()
         except thread.error:
@@ -788,15 +789,15 @@ def sigHUPhandler(dummy_signum, dummy_frame):
 class Terminate(Exception):
     """Exception thrown when terminating the engine."""
 
-def sigTERMhandler(dummy_signum, dummy_frame):
-    syslog.syslog(syslog.LOG_DEBUG, "engine: Received signal TERM.")
+def sigTERMhandler(signum, dummy_frame):
+    syslog.syslog(syslog.LOG_DEBUG, "engine: Received signal TERM (%s)." % signum)
     raise Terminate
 
 #==============================================================================
 #                    Function main
 #==============================================================================
 
-def main(options, args, EngineClass=StdEngine) :
+def main(options, args, engine_class=StdEngine):
     """Prepare the main loop and run it. 
 
     Mostly consists of a bunch of high-level preparatory calls, protected
@@ -812,6 +813,7 @@ def main(options, args, EngineClass=StdEngine) :
     syslog.syslog(syslog.LOG_INFO, "engine: Initializing weewx version %s" % weewx.__version__)
     syslog.syslog(syslog.LOG_INFO, "engine: Using Python %s" % sys.version)
     syslog.syslog(syslog.LOG_INFO, "engine: Platform %s" % platform.platform())
+    syslog.syslog(syslog.LOG_INFO, "engine: Locale is '%s'" % locale.setlocale(locale.LC_ALL))
 
     # Save the current working directory. A service might
     # change it. In case of a restart, we need to change it back.
@@ -821,18 +823,20 @@ def main(options, args, EngineClass=StdEngine) :
         syslog.syslog(syslog.LOG_INFO, "engine: pid file is %s" % options.pidfile)
         daemon.daemonize(pidfile=options.pidfile)
 
+    # for backward compatibility, recognize loop_on_init from command-line
+    loop_on_init = options.loop_on_init
+
     # be sure that the system has a reasonable time (at least 1 jan 2000).
     # log any problems every minute.
-    ts = time.time()
     n = 0
-    while ts < 946684800:
+    while weewx.launchtime_ts < 946684800:
         if n % 120 == 0:
             syslog.syslog(syslog.LOG_INFO,
                           "engine: waiting for sane time.  current time is %s"
-                          % weeutil.weeutil.timestamp_to_string(ts))
+                          % weeutil.weeutil.timestamp_to_string(weewx.launchtime_ts))
         n += 1
         time.sleep(0.5)
-        ts = time.time()
+        weewx.launchtime_ts = time.time()
 
     while True:
 
@@ -847,17 +851,23 @@ def main(options, args, EngineClass=StdEngine) :
             syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_DEBUG))
         else:
             syslog.setlogmask(syslog.LOG_UPTO(syslog.LOG_INFO))
+        syslog.syslog(syslog.LOG_DEBUG, "engine: debug is %s" % weewx.debug)
+
+        # See if there is a loop_on_init directive in the configuration, but
+        # use it only if nothing was specified via command-line.
+        if loop_on_init is None:
+            loop_on_init = to_bool(config_dict.get('loop_on_init', False))
 
         try:
             syslog.syslog(syslog.LOG_DEBUG, "engine: Initializing engine")
 
             # Create and initialize the engine
-            engine = EngineClass(config_dict)
+            engine = engine_class(config_dict)
     
             syslog.syslog(syslog.LOG_INFO, "engine: Starting up weewx version %s" % weewx.__version__)
 
-            # Start the engine. It should run forever unless an exception occurs. Log it
-            # if the function returns.
+            # Start the engine. It should run forever unless an exception
+            # occurs. Log it if the function returns.
             engine.run()
             syslog.syslog(syslog.LOG_CRIT, "engine: Unexpected exit from main loop. Program exiting.")
     
@@ -865,8 +875,9 @@ def main(options, args, EngineClass=StdEngine) :
         except InitializationError, e:
             # Log it:
             syslog.syslog(syslog.LOG_CRIT, "engine: Unable to load driver: %s" % e)
-            # See if we should loop, waiting for the console to be ready, or exit:
-            if options.loop_on_init:
+            # See if we should loop, waiting for the console to be ready.
+            # Otherwise, just exit.
+            if loop_on_init:
                 syslog.syslog(syslog.LOG_CRIT, "    ****  Waiting 60 seconds then retrying...")
                 time.sleep(60)
                 syslog.syslog(syslog.LOG_NOTICE, "engine: retrying...")
@@ -887,7 +898,17 @@ def main(options, args, EngineClass=StdEngine) :
             
         except weedb.OperationalError, e:
             # Caught a database error. Log it, wait 120 seconds, then try again
-            syslog.syslog(syslog.LOG_CRIT, "engine: Caught database OperationalError: %s" % e)
+            syslog.syslog(syslog.LOG_CRIT, "engine: Database OperationalError exception: %s" % e)
+            if options.exit:
+                syslog.syslog(syslog.LOG_CRIT, "    ****  Exiting...")
+                sys.exit(weewx.DB_ERROR)
+            syslog.syslog(syslog.LOG_CRIT, "    ****  Waiting 2 minutes then retrying...")
+            time.sleep(120)
+            syslog.syslog(syslog.LOG_NOTICE, "engine: retrying...")
+            
+        except weedb.CannotConnect, e:
+            # Unable to connect to the database server. Log it, wait 120 seconds, then try again
+            syslog.syslog(syslog.LOG_CRIT, "engine: Database CannotConnect exception: %s" % e)
             if options.exit:
                 syslog.syslog(syslog.LOG_CRIT, "    ****  Exiting...")
                 sys.exit(weewx.DB_ERROR)
@@ -901,18 +922,20 @@ def main(options, args, EngineClass=StdEngine) :
             weeutil.weeutil.log_traceback("    ****  ", syslog.LOG_DEBUG)
             syslog.syslog(syslog.LOG_CRIT, "    ****  Waiting 10 seconds then retrying...")
             time.sleep(10)
-            syslog.syslog(syslog.LOG_NOTICE,"engine: retrying...")
+            syslog.syslog(syslog.LOG_NOTICE, "engine: retrying...")
     
         except Restart:
             syslog.syslog(syslog.LOG_NOTICE, "engine: Received signal HUP. Restarting.")
 
         except Terminate:
             syslog.syslog(syslog.LOG_INFO, "engine: Terminating weewx version %s" % weewx.__version__)
-            sys.exit()
+            weeutil.weeutil.log_traceback("    ****  ", syslog.LOG_DEBUG)
+            # Reraise the exception (this should cause the program to exit)
+            raise
 
         # Catch any keyboard interrupts and log them
         except KeyboardInterrupt:
-            syslog.syslog(syslog.LOG_CRIT,"engine: Keyboard interrupt.")
+            syslog.syslog(syslog.LOG_CRIT, "engine: Keyboard interrupt.")
             # Reraise the exception (this should cause the program to exit)
             raise
     
@@ -931,7 +954,7 @@ def getConfiguration(config_path):
     """Return the configuration file at the given path."""
     # Try to open up the given configuration file. Declare an error if
     # unable to.
-    try :
+    try:
         config_dict = configobj.ConfigObj(config_path, file_error=True)
     except IOError:
         sys.stderr.write("Unable to open configuration file %s" % config_path)

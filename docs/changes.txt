@@ -1,7 +1,339 @@
 weewx change history
 --------------------
 
-3.4.1 XX/YY/2016
+3.7.2 MM/DD/YYYY
+
+MySQL error 2006 ("MySQL server has gone away") now gets mapped to
+`weedb.CannotConnectError`. PR #246
+
+Corrected formatting used to report indoor temp and humidity to the
+Weather Underground.
+
+Added inDewpoint to the observation group dictionary.
+
+Added missing aggregation type 'min_ge'. Thanks to user Christopher McAvaney!
+
+Fixed bug in wmr200 driver that resulted in archive records with no
+interval field and 'NOT NULL constraint failed: archive.interval' errors.
+
+Plots can now use an `aggregate_type` of `last`. Fixes issue #261.
+
+When extracting observation type stormRain (Davis Vantage only), the
+accumulators now extract the last (instead of average) value.
+
+Added additional accumulator extractors.
+
+Allow reports to be run against a binding other than `wx_binding`.
+
+Include rain count in cc3000 status.
+
+Using the `set-altitude` command in `wee_device` no longer changes the
+barometer calibration constant in Vantage devices. See PR #263.
+Thanks to user dl1rf!
+
+Do chdir at start of ImageGenerator so that skin.conf paths are treated the
+same as those of other generators.
+
+
+3.7.1 03/22/2017
+
+Fixed log syntax in wmr100 and wmr9x8 drivers.
+
+Emit Rapidfire cache info only when debug is level 3 or higher.  Thanks to
+user Darryn Capes-Davis.
+
+Fixed problem that prevented Rapidfire from being used with databases in
+metric units. Fixes issue #230.
+
+Set WOW `post_interval` in config dict instead of thread arguments so that
+overrides are possible.  Thanks to user Kenneth Baker.
+
+Distribute example code and example extensions in a single examples directory.
+Ensure that the examples directory is included in the rpm and deb packages.
+
+Fixed issue that prevented a port from being specified for MySQL installations.
+
+MySQL error 2003 ("Can't connect to MySQL server...") now gets mapped to
+`weedb.CannotConnectError`. PR #234.
+
+By default, autocommit is now enabled for the MySQL driver. Fixes issue #237.
+
+Highs and lows from LOOP packets were not being used in preference to archive
+records in daily summaries. Fixed issue #239.
+
+
+3.7.0 03/11/2017
+
+The tag $current now uses the record included in the event NEW_ARCHIVE_RECORD,
+rather than retrieve the last record from the database. This means you can
+use the tag $current for observation types that are in the record, but not
+necessarily in the database. Fixes issue #13.
+
+Most aggregation periods now allow you to go farther in the past. For
+example, the tag $week($weeks_ago=1) would give you last week. You
+can also now specify the start and end of an aggregation period, such
+as $week.start and $week.end.
+
+Can now do SummaryByDay (as well as SummaryByMonth and SummaryByYear).
+NB: This can generate *lots* of files --- one for every day in your database!
+Leaving this undocumented for now. Fixes issue #185.
+
+When doing hardware record generation, the engine now augments the record with
+any additional observation types it can extract out of the accumulators.
+Fixes issue #15.
+
+It's now possible to iterate over every record within a timespan.
+Fixes issue #182.
+
+Use schema_name = hardware_name pattern in sensor map for drivers that support
+extensible sensor suites, including the drivers for cc3000, te923, wmr300,
+wmr100, wmr200, wmr9x8
+
+Simplified sensor mapping implementation for wmr100 and wmr200 drivers.  For
+recent weewx releases, these are the default mappings for wmr200:
+  3.6.0: in:0, out:1, e2:2, e3:3, ..., e8:8   hard-coded
+  3.6.1: in:0, out:1, e1:2, e2:3, ..., e7:8   hard-coded
+  3.7.0: in:0, out:1, e1:2, e2:3, ..., e7:8   sensor_map
+and these are default mappings for wmr100:
+  3.6.2: in:0, out:1, e1:2, e2:3, ..., e7:8   hard-coded
+  3.7.0: in:0, out:1, e1:2, e2:3, ..., e7:8   sensor_map
+
+Enabled battery status for every remote T/H and T sensor in wmr100 driver.
+
+Enabled heatindex for each remote T/H sensor in wmr200 driver.
+
+Fixed inverted battery status indicator in wmr200 driver.
+
+Fixed 'Calculatios' typo in wmr100, wmr200, wmr9x8, and wmr300 drivers.
+
+Fixed usb initialization issues in the wmr300 driver.
+
+Added warning in wmr300 driver when rain counter reaches maximum value.
+
+Decode heatindex and windchill from wmr300 sensor outputs.
+
+Report the firmware version when initializing the cc3000 driver.
+
+Fixed bug in vantage driver that would prevent console wake up during
+retries when fetching EEPROM vales. Thanks to user Dan Begallie!
+
+The vantage driver no longer emits values for non-existent sensors. 
+As a result, LOOP and archive packets are now much smaller. If this works
+out, other drivers will follow suit. Partial fix of issue #175.
+
+The vantage driver now emits the barometer trend in LOOP packets as 
+field 'trendIcon'.
+
+The engine now logs locale. Additional information if a TERM signal is 
+received.
+
+Removed the site-specific "Pond" extensions from the Standard skin.
+
+The Standard skin now includes plots of outside humidity. Fixes 
+issue #181.
+
+Fixed reference to index.html.tmpl in the xstats example.
+
+Changed algorithm for calculating ET to something more appropriate for
+hourly values (former algorithm assumed daily values). Fixes issue #160.
+
+Fixed bug in Celsius to Fahrenheit conversion that affected pressure
+conversions in uwxutils.py, none of which were actually used.
+
+Fixed bug that was introduced in v3.6.0, which prevented wee_reports from
+working for anything other than the current time.
+
+Documented the experimental anti-alias feature, which has been in weewx
+since v3.1.0. Fixes issue #6.
+
+Fixed problem where multiple subsections under [SummaryBy...] stanzas could
+cause multiple copies of their target date to be included in the Cheetah
+variable $SummaryByYear and $SummaryByMonth. Fixes issue #187.
+
+Moved examples out of bin directory.  Eliminated experimental directory.
+Reinforce the use of user directory, eliminate use of examples directory.
+Renamed xsearch.py to stats.py.
+
+OS uptime now works for freeBSD. Thanks to user Bill Richter!
+PR #188.
+
+Broke out developer's notes into a separate document.
+
+Added @media CSS for docs to improve printed/PDF formatting.  Thanks to user
+Tiouck!
+
+Added a 0.01 second delay after each read_byte in ws23xx driver to reduce
+chance of data spikes caused by RS232 line contention.  Thanks lionel.sylvie!
+
+The observation windGustDir has been removed from wmr100, wmr200, te923, and
+fousb drivers.  These drivers were simply assigning windGustDir to windDir,
+since none of the hardware reports an actual windGustDir.
+
+Calculation of aggregates over a period of one day or longer can now
+respect any change in archive interval. To take advantage of this
+feature, you will have to apply an update to your daily
+summaries. This can be done using the tool wee_database, option
+--update. Refer to the ‘Changes to daily summaries’ section in the
+Upgrade Guide to determine whether you should update or not. Fixes issue #61.
+
+Max value of windSpeed for the day is now the max archive value of windSpeed.
+Formerly, it was the max LOOP value. If you wish to patch your older
+daily summaries to interpret max windSpeed this way, use the tool wee_database
+with option --update. Fixes issue #195.
+
+The types of accumulators, and the strategies to put and extract records 
+out of them, can now be specified by config stanzas. This will be of
+interest to extension writers. See issue #115.
+
+Fixed battery status label in acurite driver: changed from txTempBatteryStatus
+to outTempBatteryStatus.  Thanks to user manos!
+
+Made the lowBattery example more robust - it now checks for any known low
+battery status, not just txBatteryStatus.  Thanks to user manos!
+
+Added info-level log message to calculate_rain so that any rain counter reset
+will be logged.
+
+Added better logging for cc3000 when the cc3000 loses contact with sensors
+for extended periods of time.
+
+How long to wait before retrying after a bad uploader login is now settable
+with option retry_login. Fixes issue #212. 
+
+The test suites now use dedicated users 'weewx1' and 'weewx2'. A shell script
+has been included to setup these users.
+
+A more formal exception hierarchy has been adopted for the internal
+database library weedb. See weedb/NOTES.md.
+
+The weedb Connection and Cursor objects can now be used in a "with" clause.
+
+Slightly more robust mechanism for decoding last time a file was FTP'd.
+
+
+3.6.2 11/08/2016
+
+Fixed incorrect WU daily rain field name
+
+Fixed bug that crashed Cheetah if the weewx.conf configuration file included
+a BOM. Fixes issue #172.
+
+
+3.6.1 10/13/2016
+
+Fixed bug in wunderfixer.
+
+Fixed handling of StdWXCalculate.Calculations in modify_config in the wmr100,
+wmr200, wmr300, and wmr9x8 drivers.
+
+Eliminate the apache2, ftp, and rsync suggested dependencies from the deb
+package.  This keeps the weewx dependencies to a bare minimum.
+
+Added retries to usb read in wmr300 driver.
+
+Remapped sensor identifiers in wmr200 driver so that extraTemp1 and
+extraHumid1 are usable.
+
+Standardized format to be used for times to YYYY-mm-ddTHH:MM.
+
+
+3.6.0 10/07/2016
+
+Added the ability to run reports using a cron-like notation, instead of with
+every report cycle. See User's Guide for details. Thanks to user Gary Roderick.
+PR #122. Fixes issue #17.
+
+Added the ability to easily import CSV, Weather Underground, and Cumulus
+data using a new utility, wee_import. Thanks again to über-user Gary Roderick.
+PR #148. Fixes issue #97.
+
+Refactored documentation so that executable utilities are now in their own
+document, utilities.htm.
+
+Fixed rpm package so that it will retain any changes to the user directory.
+Thanks to user Pat OBrien.
+
+No ET when beyond the reach of the sun.
+
+Software calculated ET now returns the amount of evapotranspiration that
+occurred during the archive interval. Fixes issue #160
+
+Fixed wee_config to handle config files that have no FTP or RSYNC.
+
+Fixed bug in StdWXCalculate that ignored setting of 'None' (#110).
+
+Which derived variables are to be calculated are now in a separate 
+subsection of [StdWXCalculate] called [[Calculations]]. 
+Upgrade process takes care of upgrading your config file.
+
+Reset weewx launchtime when waiting for sane system clock (thanks to user
+James Taylor).
+
+Fixed anti-alias bug in genplot.  Issue #111.
+
+Corrected the conversion factor between inHg and mbar. Thanks to user Olivier.
+
+Consolidated unit conversions into module weewx.units.
+
+Plots longer than two years now use an x-axis increment of one year. Thanks to
+user Olivier!
+
+The WS1 driver now retries connection if it fails. Thanks to user 
+Kevin Caccamo! PR #112.
+
+Major update to the CC3000 driver:
+ - reading historical records is more robust
+ - added better error handling and reporting
+ - fixed to handle random NULL characters in historical records
+ - fixed rain units
+ - added ability to get data from logger as fast as it will send it
+ - added support for additional temperature sensors T1 and T2
+ - added transmitter channel in station diagnostics
+ - added option to set/get channel, baro offset
+ - added option to reset rain counter
+
+Fixed brittle reference to USBError.args[0] in wmr200, wmr300, and te923
+drivers.
+
+Fixed typo in default te923 sensor mapping for h_3.  Thanks to user ngulden.
+
+Added flag for reports so that reports can be disabled by setting enable=False
+instead of deleting or commenting entire report sections in weewx.conf.
+
+The vantage and ws23xx drivers now include the fix for the policy of
+"wind direction is undefined when no wind speed".  This was applied to other
+drivers in weewx 3.3.0.
+
+Fixed te923 driver behavior when reading from logger, especially on stations
+with large memory configuration.  Thanks to users Joep and Nico.
+
+Fixed rain counter problems in wmr300 driver.  The driver no longer attempts
+to cache partial packets.  Do no process packets with non-loop data when
+reading loop data.  Thanks to user EricG.
+
+Made wmr300 driver more robust against empty usb data buffers.
+
+Fixed pressure/barometer in wmr300 driver when reading historical records.
+
+Fixed problem with the Vantage driver where program could crash if a
+serial I/O error happens during write. Fixes issue #134.
+
+Changed name of command to clear the Vantage memory from --clear to
+--clear-memory to make it more consistent with other devices.
+
+Fixed problem that prevented channel 8 from being set by the Vantage driver.
+
+Added solaris .smf configuration.  Thanks to user whorfin.
+
+Added option post_indoor_observations for weather underground.
+
+Added maximum value to radiation and UV plots.
+
+In the .deb package, put weewx reports in /var/www/html/weewx instead of
+/var/www/weewx to match the change of DocumentRoot in debian 8 and later.
+
+
+3.5.0 03/13/2016
 
 Fixed bug that prevented rsync uploader from working.
 
@@ -10,6 +342,41 @@ Fixed bug in wmr300 driver when receiving empty buffers from the station.
 The type of MySQL database engine can now be specified. Default is 'INNODB'.
 
 Updated userguide with capabilities of the TE923 driver added in 3.4.0.
+
+Added aggregation type min_ge(val).
+
+Provide better feedback when a driver does not implement a configurator.
+
+Added humidex and appTemp to group_temperature. Fixed issue #96.
+
+Backfill of the daily summary is now done in "tranches," reducing the memory
+requirements of MySQL. Thanks to über-user Gary Roderick! Fixes issue #83.
+
+Made some changes in the Vantage driver to improve performance, particularly
+with the IP version of the logger. Thanks to user Luc Heijst for nagging
+me that the driver could be improved, and for figuring out how.
+
+Plotting routines now use Unicode internally, but convert to UTF-8 if a font
+does not support it. Fixes issue #101.
+
+Improved readability of documents on mobile devices. Thank you Chris
+Davies-Barnard!
+
+The loop_on_init option can now be specified in weewx.conf
+
+When uploading data to CWOP, skip records older than 60 seconds.  Fixes
+issue #106.
+
+Added modify_config method to the driver's configuration editor so that drivers
+can modify the configuration during installation, if necessary.
+
+The fousb and ws23xx drivers use modify_config to set record_generation to
+software.  This addresses issue #84.
+
+The wmr100, wmr200, wmr9x8, and wmr300 drivers use modify_config to set
+rainRate, heatindex, windchill, and dewpoint calculations to hardware instead
+of prefer_hardware since each of these stations has partial packets.  This
+addresses issue #7 (SF #46).
 
 
 3.4.0 01/16/2016
@@ -301,7 +668,7 @@ Fixes ticket #40.
 Fixed problem where dumping to database could cause stats to get added to
 the daily summaries twice.
 
-Secure FTP (SFTP) sessions are now possible, but don't work very well with
+FTP over TLS (FTPS) sessions are now possible, but don't work very well with
 Microsoft FTP servers. Requires Python v2.7. Will not work with older
 versions of Python. Fixes ticket #37.
 

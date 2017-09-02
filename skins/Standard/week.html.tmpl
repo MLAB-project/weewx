@@ -1,11 +1,15 @@
 #errorCatcher Echo
+##
+## Specifying an encoding of UTF-8 is usually safe, but if your text is 
+## actually in Latin-1, then you should replace the string "UTF-8" with "latin-1"
+## If you do this, you should also change the 'Content-Type' metadata below.
 #encoding UTF-8
+##
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head profile="http://www.w3.org/2005/10/profile">
-    #if $encoding == 'utf8'
+    ## This choice should match the #encoding directive above
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    #end if    
     <title>$station.location Weekly weather summary</title>
     <link rel="stylesheet" type="text/css" href="weewx.css"/>
     <link rel="icon" type="image/png" href="favicon.ico" />
@@ -152,18 +156,6 @@
                   $week.inTemp.min at $week.inTemp.mintime
                 </td>
               </tr>
-			  #if $week.extraTemp1.has_data
-              <tr>
-                <td class="stats_label">
-                  High Pond Temperature<br/>
-                  Low Pond Temperature
-                </td>
-                <td class="stats_data">
-                  $week.extraTemp1.max at $week.extraTemp1.maxtime<br/>
-                  $week.extraTemp1.min at $week.extraTemp1.mintime
-                </td>
-              </tr>
-              #end if
               #if $week.UV.has_data
               <tr>
                 <td class="stats_label">
@@ -331,18 +323,6 @@
                   $month.inTemp.min at $month.inTemp.mintime
                 </td>
               </tr>
-              #if $month.extraTemp1.has_data
-              <tr>
-                <td class="stats_label">
-                  High Pond Temperature<br/>
-                  Low Pond Temperature
-                </td>
-                <td class="stats_data">
-                  $month.extraTemp1.max at $month.extraTemp1.maxtime<br/>
-                  $month.extraTemp1.min at $month.extraTemp1.mintime
-                </td>
-              </tr>
-              #end if
               #if $month.UV.has_data
               <tr>
                 <td class="stats_label">
@@ -393,6 +373,7 @@
         <div id="plots">
           <img src="weektempdew.png" alt="temperatures" />
           <img src="weektempchill.png" alt="heatchill" />
+          <img src="weekhumidity.png"  alt="outside humidity" />
           <img src="weekrain.png" alt="rain" />
           <img src="weekwind.png" alt="wind" />
           <img src="weekbarometer.png" alt="barometer"/>
@@ -407,9 +388,6 @@
           #end if
           #if $week.rxCheckPercent.has_data
           <img src="weekrx.png" alt="week rx percent"/>
-          #end if
-          #if $week.extraTemp1.has_data
-          <img src="weekpond.png" alt="Pond Temperatures" />
           #end if
         </div>
       </div> <!-- End id "content" -->

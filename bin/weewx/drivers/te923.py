@@ -9,6 +9,8 @@
 #   http://te923.fukz.org/
 # Thanks to Mark Teel for the te923 implementation in wview:
 #   http://www.wviewweather.com/
+# Thanks to mrbalky:
+#   http://www.mrbalky.com/tag/te923/
 
 """Classes and functions for interfacing with te923 weather stations.
 
@@ -326,7 +328,7 @@ SECTION 13: Unknownn
 
 SECTION 14: Archiving
 
-0c0000FB - Unknown
+0x0000FB - Unknown
 0x0000FC - Memory size (0 = 0x1fff, 2 = 0x20000)
 0x0000FD - Number of records (High)
 0x0000FE - Archive interval 
@@ -382,17 +384,17 @@ The station shows up on the USB as a HID.  Control packet is 8 bytes.
 Read from station:
  0x05 (Length)
  0xAF (Read)
- Addr (Bit 17:16), Addr (Bits 15:8), Addr (Bits (7:0), CRC, Unused, Unused
+ Addr (Bit 17:16), Addr (Bits 15:8), Addr (Bits 7:0), CRC, Unused, Unused
 
 Read acknowledge:
  0x24 (Ack)
  0xAF (Read)
- Addr (Bit 17:16), Addr (Bits 15:8), Addr (Bits (7:0), CRC, Unused, Unused
+ Addr (Bit 17:16), Addr (Bits 15:8), Addr (Bits 7:0), CRC, Unused, Unused
 
 Write to station:
  0x07 (Length)
  0xAE (Write)
- Addr (Bit 17:16), Addr (Bits 15:8), Addr (Bits (7:0), Data1, Data2, Data3
+ Addr (Bit 17:16), Addr (Bits 15:8), Addr (Bits 7:0), Data1, Data2, Data3
  ... Data continue with 3 more packets of length 7 then ...
  0x02 (Length), Data32, CRC, Unused, Unused, Unused, Unused, Unused, Unused
 
@@ -426,9 +428,9 @@ schema, these are the additional fields that must be added to the schema:
           ('storm',                'REAL'),
 """
 
-# TODO: figure out how to read station pressure from station
+# TODO: figure out how to read gauge pressure instead of slp
 # TODO: figure out how to clear station memory
-# TODO: clear rain total
+# TODO: add option to reset rain total
 
 # FIXME: set-date and sync-date do not work - something reverts the clock
 # FIXME: is there any way to get rid of the bad header byte on first read?
@@ -440,14 +442,15 @@ import usb
 
 import weewx.drivers
 import weewx.wxformulas
+from weeutil.weeutil import timestamp_to_string
 
 DRIVER_NAME = 'TE923'
-DRIVER_VERSION = '0.17'
+DRIVER_VERSION = '0.24'
 
-def loader(config_dict, engine):
+def loader(config_dict, engine):  # @UnusedVariable
     return TE923Driver(**config_dict[DRIVER_NAME])
 
-def configurator_loader(config_dict):
+def configurator_loader(config_dict):  # @UnusedVariable
     return TE923Configurator()
 
 def confeditor_loader():
@@ -455,39 +458,38 @@ def confeditor_loader():
 
 DEBUG_READ = 1
 DEBUG_WRITE = 1
-DEBUG_DECODE = 1
+DEBUG_DECODE = 0
 
 # map the station data to the default database schema, plus extensions
-DEFAULT_OBSERVATION_MAP = {
-    'link_wind': 'windLinkStatus',
-    'bat_wind': 'windBatteryStatus',
-    'link_rain': 'rainLinkStatus',
-    'bat_rain': 'rainBatteryStatus',
-    'link_uv': 'uvLinkStatus',
-    'bat_uv': 'uvBatteryStatus',
-    'uv': 'UV',
-    't_in': 'inTemp',
-    'h_in': 'inHumidity',
-    't_1': 'outTemp',
-    'h_1': 'outHumidity',
-    'bat_1': 'outBatteryStatus',
-    'link_1': 'outLinkStatus',
-    't_2': 'extraTemp1',
-    'h_2': 'extraHumid1',
-    'bat_2': 'extraBatteryStatus1',
-    'link_2': 'extraLinkStatus1',
-    't_3': 'extraTemp2',
-    'h_3': 'extraHumid3',
-    'bat_3': 'extraBatteryStatus2',
-    'link_3': 'extraLinkStatus2',
-    't_4': 'extraTemp3',
-    'h_4': 'extraHumid3',
-    'bat_4': 'extraBatteryStatus3',
-    'link_4': 'extraLinkStatus3',
-    't_5': 'extraTemp4',
-    'h_5': 'extraHumid4',
-    'bat_5': 'extraBatteryStatus4',
-    'link_5': 'extraLinkStatus4',
+DEFAULT_MAP = {
+    'windLinkStatus': 'link_wind',
+    'windBatteryStatus': 'bat_wind',
+    'rainLinkStatus': 'link_rain',
+    'rainBatteryStatus': 'bat_rain',
+    'uvLinkStatus': 'link_uv',
+    'uvBatteryStatus': 'bat_uv',
+    'inTemp': 't_in',
+    'inHumidity': 'h_in',
+    'outTemp': 't_1',
+    'outHumidity': 'h_1',
+    'outTempBatteryStatus': 'bat_1',
+    'outLinkStatus': 'link_1',
+    'extraTemp1': 't_2',
+    'extraHumid1': 'h_2',
+    'extraBatteryStatus1': 'bat_2',
+    'extraLinkStatus1': 'link_2',
+    'extraTemp2': 't_3',
+    'extraHumid2': 'h_3',
+    'extraBatteryStatus2': 'bat_3',
+    'extraLinkStatus2': 'link_3',
+    'extraTemp3': 't_4',
+    'extraHumid3': 'h_4',
+    'extraBatteryStatus3': 'bat_4',
+    'extraLinkStatus3': 'link_4',
+    'extraTemp4': 't_5',
+    'extraHumid4': 'h_5',
+    'extraBatteryStatus4': 'bat_5',
+    'extraLinkStatus4': 'link_5'
 }
 
 def logmsg(dst, msg):
@@ -522,9 +524,9 @@ class TE923ConfEditor(weewx.drivers.AbstractConfEditor):
     # The default configuration associates the channel 1 sensor with outTemp
     # and outHumidity.  To change this, or to associate other channels with
     # specific columns in the database schema, use the following map.
-    [[map]]
+    #[[sensor_map]]
 %s
-""" % "\n".join(["        %s = %s" % (x, DEFAULT_OBSERVATION_MAP[x]) for x in DEFAULT_OBSERVATION_MAP])
+""" % "\n".join(["    #   %s = %s" % (x, DEFAULT_MAP[x]) for x in DEFAULT_MAP])
 
 
 class TE923Configurator(weewx.drivers.AbstractConfigurator):
@@ -753,12 +755,12 @@ class TE923Configurator(weewx.drivers.AbstractConfigurator):
                           action="store_true", help="display archive interval")
         parser.add_option("--set-interval", dest="setinterval",
                           type=str, metavar="INTERVAL",
-                          help="set archive interval (seconds)")
+                          help="set archive interval (minutes)")
         parser.add_option("--format", dest="format",
                           type=str, metavar="FORMAT", default='table',
                           help="formats include: table, dict")
 
-    def do_options(self, options, parser, config_dict, prompt):
+    def do_options(self, options, parser, config_dict, prompt):  # @UnusedVariable
         if (options.format.lower() != 'table' and
             options.format.lower() != 'dict'):
             parser.error("Unknown format '%s'.  Known formats include 'table' and 'dict'." % options.format)
@@ -816,7 +818,7 @@ class TE923Configurator(weewx.drivers.AbstractConfigurator):
         TE923Configurator.print_data(data, fmt)
 
     @staticmethod
-    def show_history(station, ts=0, count=0, fmt='dict'):
+    def show_history(station, ts=0, count=None, fmt='dict'):
         print "Querying the station for historical records..."
         for r in station.gen_records(ts, count):
             TE923Configurator.print_data(r, fmt)
@@ -1010,7 +1012,7 @@ class TE923Configurator(weewx.drivers.AbstractConfigurator):
         alarm_list = alarm.split(',')
         if len(alarm_list) != 9:
             print "Bad alarm '%s'" % alarm
-            print "Alarm format is: %s" % ALMSTR
+            print "Alarm format is: %s" % TE923Configurator.ALMSTR
             return
         weekday = alarm_list[0]
         if weekday.lower() != 'off':
@@ -1069,11 +1071,11 @@ class TE923Configurator(weewx.drivers.AbstractConfigurator):
 
     @staticmethod
     def set_interval(station, interval):
-        """accept 30s|2h|1d format or raw seconds, but only known intervals"""
+        """accept 30s|2h|1d format or raw minutes, but only known intervals"""
         idx = TE923Configurator.interval_to_idx.get(interval)
         if idx is None:
             try:
-                ival = int(interval)
+                ival = int(interval * 60)
                 for i in TE923Station.idx_to_interval_sec:
                     if ival == TE923Station.idx_to_interval_sec[i]:
                         idx = i
@@ -1115,6 +1117,8 @@ class TE923Driver(weewx.drivers.AbstractDevice):
         model: Which station model is this?
         [Optional. Default is 'TE923']
         """
+        loginf('driver version is %s' % DRIVER_VERSION)
+
         global DEBUG_READ
         DEBUG_READ = int(stn_dict.get('debug_read', DEBUG_READ))
         global DEBUG_WRITE
@@ -1129,17 +1133,22 @@ class TE923Driver(weewx.drivers.AbstractDevice):
         self.model = stn_dict.get('model', 'TE923')
         self.max_tries = int(stn_dict.get('max_tries', 5))
         self.retry_wait = int(stn_dict.get('retry_wait', 3))
+        self.read_timeout = int(stn_dict.get('read_timeout', 10))
         self.polling_interval = int(stn_dict.get('polling_interval', 10))
-        self.obs_map = stn_dict.get('map', DEFAULT_OBSERVATION_MAP)
-
-        loginf('driver version is %s' % DRIVER_VERSION)
         loginf('polling interval is %s' % str(self.polling_interval))
-        loginf('observation map is %s' % self.obs_map)
+        self.sensor_map = dict(DEFAULT_MAP)
+        if 'sensor_map' in stn_dict:
+            self.sensor_map.update(stn_dict['sensor_map'])
+        loginf('sensor map is %s' % self.sensor_map)
 
         self.station = TE923Station(max_tries=self.max_tries,
-                                    retry_wait=self.retry_wait)
+                                    retry_wait=self.retry_wait,
+                                    read_timeout=self.read_timeout)
         self.station.open()
         loginf('logger capacity %s records' % self.station.get_memory_size())
+        ts = self.station.get_date()
+        now = int(time.time())
+        loginf('station time is %s, computer time is %s' % (ts, now))
 
     def closePort(self):
         if self.station is not None:
@@ -1160,7 +1169,7 @@ class TE923Driver(weewx.drivers.AbstractDevice):
             status = self.station.get_status()
             packet = self.data_to_packet(data, status=status,
                                          last_rain=self._last_rain_loop,
-                                         obs_map=self.obs_map)
+                                         sensor_map=self.sensor_map)
             self._last_rain_loop = packet['rainTotal']
             yield packet
             time.sleep(self.polling_interval)
@@ -1173,7 +1182,7 @@ class TE923Driver(weewx.drivers.AbstractDevice):
 #            # FIXME: insert battery status on the last record
 #            packet = self.data_to_packet(data, status=None,
 #                                         last_rain=self._last_rain_archive,
-#                                         obs_map=self.obs_map)
+#                                         sensor_map=self.sensor_map)
 #            self._last_rain_archive = packet['rainTotal']
 #            if self._last_ts:
 #                packet['interval'] = (packet['dateTime'] - self._last_ts) / 60
@@ -1182,19 +1191,27 @@ class TE923Driver(weewx.drivers.AbstractDevice):
 
     # there is no battery status for historical records.
     def genStartupRecords(self, since_ts=0):
+        loginf("reading records from logger since %s" % since_ts)
+        cnt = 0
         for data in self.station.gen_records(since_ts):
             packet = self.data_to_packet(data, status=None,
                                          last_rain=self._last_rain_archive,
-                                         obs_map=self.obs_map)
+                                         sensor_map=self.sensor_map)
             self._last_rain_archive = packet['rainTotal']
             if self._last_ts:
                 packet['interval'] = (packet['dateTime'] - self._last_ts) / 60
-                yield packet
+                if packet['interval'] > 0:
+                    cnt += 1
+                    yield packet
+                else:
+                    loginf("skip packet with duplidate timestamp: %s" % packet)
             self._last_ts = packet['dateTime']
+            if cnt % 50 == 0:
+                loginf("read %s records from logger" % cnt)
+        loginf("read %s records from logger" % cnt)
 
     @staticmethod
-    def data_to_packet(data, status=None, last_rain=None,
-                       obs_map=DEFAULT_OBSERVATION_MAP):
+    def data_to_packet(data, status, last_rain, sensor_map):
         """convert raw data to format and units required by weewx
 
                     station      weewx (metric)
@@ -1213,26 +1230,24 @@ class TE923Driver(weewx.drivers.AbstractDevice):
         packet['usUnits'] = weewx.METRIC
         packet['dateTime'] = data['dateTime']
 
-        # insert values for T/H sensors based on observation map
-        for label in obs_map:
-            packet[obs_map[label]] = data.get(label)
-
-        # insert values for battery status if they are available
-        if status is not None:
-            for label in obs_map:
-                if label in status:
-                    packet[obs_map[label]] = int(status[label])
-
         # include the link status - 0 indicates ok, 1 indicates no link
-        packet['link_wind'] = 0 if data['windspeed_state'] == STATE_OK else 1
-        packet['link_rain'] = 0 if data['rain_state'] == STATE_OK else 1
-        packet['link_uv'] = 0 if data['uv_state'] == STATE_OK else 1
-        packet['link_1'] = 0 if data['t_1_state'] == STATE_OK else 1
-        packet['link_2'] = 0 if data['t_2_state'] == STATE_OK else 1
-        packet['link_3'] = 0 if data['t_3_state'] == STATE_OK else 1
-        packet['link_4'] = 0 if data['t_4_state'] == STATE_OK else 1
-        packet['link_5'] = 0 if data['t_5_state'] == STATE_OK else 1
+        data['link_wind'] = 0 if data['windspeed_state'] == STATE_OK else 1
+        data['link_rain'] = 0 if data['rain_state'] == STATE_OK else 1
+        data['link_uv'] = 0 if data['uv_state'] == STATE_OK else 1
+        data['link_1'] = 0 if data['t_1_state'] == STATE_OK else 1
+        data['link_2'] = 0 if data['t_2_state'] == STATE_OK else 1
+        data['link_3'] = 0 if data['t_3_state'] == STATE_OK else 1
+        data['link_4'] = 0 if data['t_4_state'] == STATE_OK else 1
+        data['link_5'] = 0 if data['t_5_state'] == STATE_OK else 1
 
+        # map extensible sensors to database fields
+        for label in sensor_map:
+            if sensor_map[label] in data:
+                packet[label] = data[sensor_map[label]]
+            elif status is not None and sensor_map[label] in status:
+                packet[label] = int(status[sensor_map[label]])
+
+        # handle unit converstions
         packet['windSpeed'] = data.get('windspeed')
         if packet['windSpeed'] is not None:
             packet['windSpeed'] *= 1.60934 # speed is mph; weewx wants km/h
@@ -1243,9 +1258,6 @@ class TE923Driver(weewx.drivers.AbstractDevice):
         packet['windGust'] = data.get('windgust')
         if packet['windGust'] is not None:
             packet['windGust'] *= 1.60934 # speed is mph; weewx wants km/h
-        packet['windGustDir'] = data.get('winddir')
-        if packet['windGustDir'] is not None:
-            packet['windGustDir'] *= 22.5 # weewx wants degrees
 
         packet['rainTotal'] = data['rain']
         if packet['rainTotal'] is not None:
@@ -1351,6 +1363,7 @@ def decode_humid(byte):
             return None, STATE_INVALID
     return bcd2int(byte), STATE_OK
 
+# NB: te923tool does not include the 4-bit shift
 def decode_uv(buf):
     """decode data from uv sensor"""
     data = dict()
@@ -1366,7 +1379,7 @@ def decode_uv(buf):
     else:
         data['uv_state'] = STATE_OK
         data['uv'] = bcd2int(buf[18] & 0x0f) / 10.0 \
-            + bcd2int(buf[18] & 0xf0) \
+            + bcd2int((buf[18] & 0xf0) >> 4) \
             + bcd2int(buf[19] & 0x0f) * 10.0
     if DEBUG_DECODE:
         logdbg("UVX  %s %s" % (data['uv'], data['uv_state']))
@@ -1426,10 +1439,10 @@ def decode_ws(byte1, byte2):
     value = bcd2int(byte1) / 10.0 + bcd2int(byte2 & 0x0f) * 10.0 + offset
     return value, STATE_OK
 
+# the rain counter is in the station, not the rain bucket.  so if the link
+# between rain bucket and station is lost, the station will miss rainfall and
+# there is no way to know about it.
 # FIXME: figure out how to detect link status between station and rain bucket
-# FIXME: according to sebastian, the counter is in the station, not the rain
-#        bucket.  so if the link between rain bucket and station is lost, the
-#        station will miss rainfall and there is no way to know about it.
 # NB: wview treats the raw rain count as millimeters
 def decode_rain(buf):
     """rain counter is number of bucket tips, each tip is about 0.03 inches"""
@@ -1495,19 +1508,22 @@ class BadHeader(weewx.WeeWxIOError):
 class TE923Station(object):
     ENDPOINT_IN = 0x81
     READ_LENGTH = 0x8
-    TIMEOUT = 1000
+    TIMEOUT = 1200
+    START_ADDRESS = 0x101
+    RECORD_SIZE = 0x26
 
     idx_to_interval_sec = {
         1: 300, 2: 600, 3: 1200, 4: 1800, 5: 3600, 6: 5400, 7: 7200,
         8: 10800, 9: 14400, 10: 21600, 11: 86400}
 
     def __init__(self, vendor_id=0x1130, product_id=0x6801,
-                 max_tries=10, retry_wait=5):
+                 max_tries=10, retry_wait=5, read_timeout=5):
         self.vendor_id = vendor_id
         self.product_id = product_id
         self.devh = None
         self.max_tries = max_tries
         self.retry_wait = retry_wait
+        self.read_timeout = read_timeout
 
         self._num_rec = None
         self._num_blk = None
@@ -1516,7 +1532,7 @@ class TE923Station(object):
         self.open()
         return self
 
-    def __exit__(self, type_, value, traceback):
+    def __exit__(self, type_, value, traceback):  # @UnusedVariable
         self.close()
 
     def open(self, interface=0):
@@ -1528,7 +1544,6 @@ class TE923Station(object):
         self.devh = dev.open()
         if not self.devh:
             raise weewx.WeeWxIOError('Open USB device failed')
-        self.devh.reset()
 
         # be sure kernel does not claim the interface
         try:
@@ -1544,6 +1559,9 @@ class TE923Station(object):
             self.close()
             logcrt("Unable to claim USB interface %s: %s" % (interface, e))
             raise weewx.WeeWxIOError(e)
+
+# doing a reset seems to cause problems more often than it eliminates them
+#        self.devh.reset()
 
         # figure out which type of memory this station has
         self.read_memory_size()
@@ -1581,10 +1599,11 @@ class TE923Station(object):
         if ret != 8:
             raise BadRead('Unexpected response to data request: %s != 8' % ret)
 
-        time.sleep(0.1)  # te923tool is 0.3
+# sleeping does not seem to have any effect on the reads
+#        time.sleep(0.1)  # te923tool is 0.3
         start_ts = time.time()
         rbuf = []
-        while time.time() - start_ts < 1:
+        while time.time() - start_ts < self.read_timeout:
             try:
                 buf = self.devh.interruptRead(
                     self.ENDPOINT_IN, self.READ_LENGTH, self.TIMEOUT)
@@ -1596,28 +1615,16 @@ class TE923Station(object):
                 if len(rbuf) >= 34:
                     break
             except usb.USBError, e:
-                if (not e.args[0].find('No data available') and
-                    not e.args[0].find('No error')):
-                    raise weewx.WeeWxIOError(e)
-            time.sleep(0.009) # te923tool is 0.15
+                errmsg = repr(e)
+                if not ('No data available' in errmsg or 'No error' in errmsg):
+                    raise
+# sleeping seems to have no effect on the reads
+#            time.sleep(0.009) # te923tool is 0.15
         else:
             logdbg("timeout while reading: ignoring bytes: %s" % _fmt(rbuf))
             raise BadRead("Timeout after %d bytes" % len(rbuf))
 
-        if len(rbuf) < 34:
-            raise BadRead("Not enough bytes: %d < 34" % len(rbuf))
-        elif len(rbuf) != 34:
-            loginf("read: wrong number of bytes: %d != 34" % len(rbuf))
-        if rbuf[0] != 0x5a:
-            raise BadHeader("Bad header byte: %02x != %02x" % (rbuf[0], 0x5a))
-
-        crc = 0x00
-        for x in rbuf[:33]:
-            crc = crc ^ x
-        if crc != rbuf[33]:
-            raise BadRead("Bad crc: %02x != %02x" % (crc, rbuf[33]))
-
-        # Send acknowledgement
+        # Send acknowledgement whether or not it was a good read
         reqbuf = [0x24, 0xAF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
         reqbuf[4] = addr / 0x10000
         reqbuf[3] = (addr - (reqbuf[4] * 0x10000)) / 0x100
@@ -1629,6 +1636,25 @@ class TE923Station(object):
                                    index=0x0000,
                                    buffer=reqbuf,
                                    timeout=self.TIMEOUT)
+
+        # now check what we got
+        if len(rbuf) < 34:
+            raise BadRead("Not enough bytes: %d < 34" % len(rbuf))
+        # there must be a header byte...
+        if rbuf[0] != 0x5a:
+            raise BadHeader("Bad header byte: %02x != %02x" % (rbuf[0], 0x5a))
+        # ...and the last byte must be a valid crc
+        crc = 0x00
+        for x in rbuf[:33]:
+            crc = crc ^ x
+        if crc != rbuf[33]:
+            raise BadRead("Bad crc: %02x != %02x" % (crc, rbuf[33]))
+
+        # early versions of this driver used to get long reads, but these
+        # might not happen any more. log it then try to use the data anyway.
+        if len(rbuf) != 34:
+            loginf("read: wrong number of bytes: %d != 34" % len(rbuf))
+
         return rbuf
 
     def _raw_write(self, addr, buf):
@@ -1679,9 +1705,9 @@ class TE923Station(object):
                 if len(rbuf) >= 1:
                     break
             except usb.USBError, e:
-                if (not e.args[0].find('No data available') and
-                    not e.args[0].find('No error')):
-                    raise weewx.WeeWxIOError(e)
+                errmsg = repr(e)
+                if not ('No data available' in errmsg or 'No error' in errmsg):
+                    raise
             time.sleep(0.009)
         else:
             raise BadWrite("Timeout after %d bytes" % len(rbuf))
@@ -1694,6 +1720,11 @@ class TE923Station(object):
             raise BadHeader("Bad header byte: %02x != %02x" % (rbuf[0], 0x5a))
 
     def _read(self, addr):
+        """raw_read returns the entire 34-byte chunk, i.e., one header byte,
+        32 data bytes, one checksum byte.  this function simply returns it."""
+        # FIXME: strip the header and checksum so that we return only the
+        #        32 bytes of data.  this will require shifting every index
+        #        pretty much everywhere else in this code.
         if DEBUG_READ:
             logdbg("read: address 0x%06x" % addr)
         for cnt in range(self.max_tries):
@@ -1729,6 +1760,8 @@ class TE923Station(object):
 
     def read_memory_size(self):
         buf = self._read(0xfc)
+        if DEBUG_DECODE:
+            logdbg("MEM  BUF[1]=%s" % buf[1])
         if buf[1] == 0:
             self._num_rec = 208
             self._num_blk = 256
@@ -1773,24 +1806,42 @@ class TE923Station(object):
     def get_versions(self):
         data = dict()
         buf = self._read(0x98)
+        if DEBUG_DECODE:
+            logdbg("VER  BUF[1]=%s BUF[2]=%s BUF[3]=%s BUF[4]=%s BUF[5]=%s" %
+                   (buf[1], buf[2], buf[3], buf[4], buf[5]))
         data['version_bar']  = buf[1]
         data['version_uv']   = buf[2]
         data['version_rcc']  = buf[3]
         data['version_wind'] = buf[4]
         data['version_sys']  = buf[5]
+        if DEBUG_DECODE:
+            logdbg("VER  bar=%s uv=%s rcc=%s wind=%s sys=%s" %
+                   (data['version_bar'], data['version_uv'],
+                    data['version_rcc'], data['version_wind'],
+                    data['version_sys']))
         return data
 
     def get_status(self):
+        # map the battery status flags.  0 indicates ok, 1 indicates failure.
+        # FIXME: i get 1 for uv even when no uv link
+        # FIXME: i get 0 for th3, th4, th5 even when no link
         status = dict()
         buf = self._read(0x4c)
-        status['bat_rain'] = buf[1] & 0x80 == 0x80
-        status['bat_wind'] = buf[1] & 0x40 == 0x40
-        status['bat_uv']   = buf[1] & 0x20 == 0x20
-        status['bat_5']    = buf[1] & 0x10 == 0x10
-        status['bat_4']    = buf[1] & 0x08 == 0x08
-        status['bat_3']    = buf[1] & 0x04 == 0x04
-        status['bat_2']    = buf[1] & 0x02 == 0x02
-        status['bat_1']    = buf[1] & 0x01 == 0x01
+        if DEBUG_DECODE:
+            logdbg("BAT  BUF[1]=%02x" % buf[1])
+        status['bat_rain'] = 0 if buf[1] & 0x80 == 0x80 else 1
+        status['bat_wind'] = 0 if buf[1] & 0x40 == 0x40 else 1
+        status['bat_uv']   = 0 if buf[1] & 0x20 == 0x20 else 1
+        status['bat_5']    = 0 if buf[1] & 0x10 == 0x10 else 1
+        status['bat_4']    = 0 if buf[1] & 0x08 == 0x08 else 1
+        status['bat_3']    = 0 if buf[1] & 0x04 == 0x04 else 1
+        status['bat_2']    = 0 if buf[1] & 0x02 == 0x02 else 1
+        status['bat_1']    = 0 if buf[1] & 0x01 == 0x01 else 1
+        if DEBUG_DECODE:
+            logdbg("BAT  rain=%s wind=%s uv=%s th5=%s th4=%s th3=%s th2=%s th1=%s" %
+                   (status['bat_rain'], status['bat_wind'], status['bat_uv'],
+                    status['bat_5'], status['bat_4'], status['bat_3'],
+                    status['bat_2'], status['bat_1']))
         return status
 
     # FIXME: is this any different than get_alt?
@@ -1828,34 +1879,43 @@ class TE923Station(object):
         data['dateTime'] = int(time.time() + 0.5)
         return data
 
-    def gen_records(self, since_ts=0, count=None):
-        """return requested records from station from oldest to newest.  If
-        since_ts is specified, then all records since that time.  If count
-        is specified, then at most the count most recent records.  If both
-        are specified then at most count records newer than the timestamp."""
-        if not count:
-            count = self._num_rec
-        if count > self._num_rec:
-            count = self._num_rec
-
+    def _get_next_index(self):
+        """get the index of the next history record"""
         buf = self._read(0xfb)
-        latest_addr = 0x101 + (buf[3] * 0x100 + buf[5] - 1) * 0x26
-        oldest_addr = latest_addr - count * 0x26
+        if DEBUG_DECODE:
+            logdbg("HIS  BUF[3]=%02x BUF[5]=%02x" % (buf[3], buf[5]))
+        record_index = buf[3] * 0x100 + buf[5]
+        logdbg("record_index=%s" % record_index)
+        if record_index > self._num_rec:
+            msg = "record index of %d exceeds memory size of %d records" % (
+                record_index, self._num_rec)
+            logerr(msg)
+            raise weewx.WeeWxIOError(msg)
+        return record_index
 
-        n = 0
-        tt = time.localtime(time.time())
-        while n < count and oldest_addr + n * 0x26 < latest_addr:
-            addr = oldest_addr + n * 0x26
-            if addr < 0x101:
-                addr += self._num_rec * 0x26
-            record = self.get_record(addr, tt.tm_year, tt.tm_mon)
-            if record and record['dateTime'] > since_ts:
-                yield record
-            n += 1
+    def _get_starting_addr(self, requested):
+        """calculate the oldest and latest addresses"""
+        count = requested
+        if count is None:
+            count = self._num_rec
+        elif count > self._num_rec:
+            count = self._num_rec
+            loginf("too many records requested (%d), using %d instead" %
+                   (requested, count))
+        idx = self._get_next_index()
+        if idx < 1:
+            idx += self._num_rec
+        latest_addr = self.START_ADDRESS + (idx - 1) * self.RECORD_SIZE
+        oldest_addr = latest_addr - (count - 1) * self.RECORD_SIZE
+        logdbg("count=%s oldest_addr=0x%06x latest_addr=0x%06x" %
+               (count, oldest_addr, latest_addr))
+        return oldest_addr, count
 
-    def get_record(self, addr=None, now_year=None, now_month=None):
-        """Return a single record from station and the address of the record
-        immediately preceding the single record.
+    def gen_records(self, since_ts=0, requested=None):
+        """return requested records from station from oldest to newest.  If
+        since_ts is specified, then all records since that time.  If requested
+        is specified, then at most that many most recent records.  If both
+        are specified then at most requested records newer than the timestamp.
 
         Each historical record is 38 bytes (0x26) long.  Records start at
         memory address 0x101 (257).  The index of the record after the latest
@@ -1865,16 +1925,69 @@ class TE923Station(object):
         On small memory stations, the last 32 bytes of memory are never used.
         On large memory stations, the last 20 bytes of memory are never used.
         """
-        buf = self._read(addr)
-        if buf[1] == 0xff:
-            # no data at this address
-            return None
 
-        if now_year is None or now_month is None:
-            now = int(time.time())
-            tt = time.localtime(now)
-            now_year = tt.tm_year
-            now_month = tt.tm_mon
+        logdbg("gen_records: since_ts=%s requested=%s" % (since_ts, requested))
+        # we need the current year and month since station does not track year
+        start_ts = time.time()
+        tt = time.localtime(start_ts)
+        # get the archive interval for use in calculations later
+        arcint = self.get_interval_seconds()
+        # if nothing specified, get everything since time began
+        if since_ts is None:
+            since_ts = 0
+        # if no count specified, use interval to estimate number of records
+        if requested is None:
+            requested = int((start_ts - since_ts) / arcint)
+            requested += 1 # safety margin
+        # get the starting address for what we want to read, plus actual count
+        oldest_addr, count = self._get_starting_addr(requested)
+        # inner loop reads records, outer loop catches any added while reading
+        more_records = True
+        while more_records:
+            n = 0
+            while n < count:
+                addr = oldest_addr + n * self.RECORD_SIZE
+                if addr < self.START_ADDRESS:
+                    addr += self._num_rec * self.RECORD_SIZE
+                record = self.get_record(addr, tt.tm_year, tt.tm_mon)
+                n += 1
+                msg = "record %d of %d addr=0x%06x" % (n, count, addr)
+                if record and record['dateTime'] > since_ts:
+                    msg += " %s" % timestamp_to_string(record['dateTime'])
+                    logdbg("gen_records: yield %s" % msg)
+                    yield record
+                else:
+                    if record:
+                        msg += " since_ts=%d %s" % (
+                            since_ts, timestamp_to_string(record['dateTime']))
+                    logdbg("gen_records: skip %s" % msg)
+                # insert a sleep to simulate slow reads
+#                time.sleep(5)
+
+            # see if reading has taken so much time that more records have
+            # arrived. read whatever records have come in since the read began.
+            now = time.time()
+            if now - start_ts > arcint:
+                newreq = int((now - start_ts) / arcint)
+                newreq += 1 # safety margin
+                logdbg("gen_records: reading %d more records" % newreq)
+                oldest_addr, count = self._get_starting_addr(newreq)
+                start_ts = now
+            else:
+                more_records = False
+
+    def get_record(self, addr, now_year, now_month):
+        """Return a single record from station."""
+
+        logdbg("get_record at address 0x%06x (year=%s month=%s)" %
+               (addr, now_year, now_month))
+        buf = self._read(addr)
+        if DEBUG_DECODE:
+            logdbg("REC  %02x %02x %02x %02x" %
+                   (buf[1], buf[2], buf[3], buf[4]))
+        if buf[1] == 0xff:
+            logdbg("get_record: no data at address 0x%06x" % addr)
+            return None
         
         year = now_year
         month = buf[1] & 0x0f
@@ -1885,21 +1998,16 @@ class TE923Station(object):
         minute = bcd2int(buf[4])
         ts = time.mktime((year, month, day, hour, minute, 0, 0, 0, -1))
         if DEBUG_DECODE:
-            logdbg("REC  %02x %02x %02x %02x" %
-                   (buf[1], buf[2], buf[3], buf[4]))
             logdbg("REC  %d/%02d/%02d %02d:%02d = %d" %
                    (year, month, day, hour, minute, ts))
 
         tmpbuf = buf[5:16]
-        crc1 = buf[16]
         buf = self._read(addr + 0x10) 
         tmpbuf.extend(buf[1:22])
-        crc2 = buf[22]
-        if DEBUG_DECODE:
-            logdbg("CRC  %02x %02x" % (crc1, crc2))
         
         data = decode(tmpbuf)
         data['dateTime'] = int(ts)
+        logdbg("get_record: found record %s" % data)
         return data
 
     def _read_minmax(self):
@@ -1975,17 +2083,13 @@ class TE923Station(object):
         self._write_date(buf)
 
     def _read_loc(self, loc_type):
-        if loc_type == 0:
-            buf = self._read(0x0)
-        else:
-            buf = self._read(0x16)
+        addr = 0x0 if loc_type == 0 else 0x16
+        buf = self._read(addr)
         return buf[1:33]
     
     def _write_loc(self, loc_type, buf):
-        if loc_type == 0:
-            self._write(0x00, buf)
-        else:
-            self._write(0x16, buf)
+        addr = 0x0 if loc_type == 0 else 0x16
+        self._write(addr, buf)
 
     def get_loc(self, loc_type):
         buf = self._read_loc(loc_type)
@@ -2166,7 +2270,6 @@ class TE923Station(object):
             raise weewx.WeeWxIOError(msg)
         return interval
 
-    # FIXME: check this - the logic seems dodgey as it drops first element
     def set_interval(self, idx):
         buf = self._read(0xFE)
         buf = buf[1:33]
@@ -2266,7 +2369,7 @@ if __name__ == '__main__':
                 else:
                     print_data(data, options.format)
             if options.records is not None:
-                for data in station.gen_records(count=options.records):
+                for data in station.gen_records(requested=options.records):
                     if options.format.lower() == FMT_TE923TOOL:
                         print_readings(data)
                     else:
