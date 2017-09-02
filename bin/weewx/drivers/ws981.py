@@ -15,7 +15,7 @@ import time
 import weewx.drivers
 
 DRIVER_NAME = 'WS981'
-DRIVER_VERSION = '0.1'
+DRIVER_VERSION = '0.2'
 
 
 def loader(config_dict, _):
@@ -42,7 +42,7 @@ def logerr(msg):
 
 class WS981Driver(weewx.drivers.AbstractDevice):
     """weewx driver that communicates with an Anemo WS981 station
-    
+
     port - serial port
     [Required. Default is /dev/ttyUSB0]
 
@@ -74,7 +74,7 @@ class WS981Driver(weewx.drivers.AbstractDevice):
 
     def genLoopPackets(self):
         while True:
-	    readings = self.station.get_readings_with_retry(self.max_tries, self.retry_wait)
+            readings = self.station.get_readings_with_retry(self.max_tries, self.retry_wait)
             packet = {'dateTime': int(time.time() + 0.5),
                       'usUnits':  weewx.METRICWX}
             data = Station.parse_readings(readings)
@@ -115,10 +115,10 @@ class Station(object):
 
     def get_readings(self):
         msg = None
-	while True:
-    	    byte = self.serial_port.read(1)
-	    if ord(byte) == 0x1E:
-		break
+        while True:
+            byte = self.serial_port.read(1)
+            if ord(byte) == 0x1E:
+                 break
         msg = self.serial_port.read(9)
         if DEBUG_READ:
             logdbg("bytes: '%s'" % msg)
@@ -144,7 +144,7 @@ class Station(object):
 
         data = dict()
 
-        if msg[0] == 'A':                    # Analog input 
+        if msg[0] == 'A' and msg[1:7] != "":                    # Analog input 
             a = msg[1:7]
             if a == '    --':
                 a = None
@@ -152,14 +152,14 @@ class Station(object):
                 a = int(a)/10.0
             data['outTemp'] = a
 
-        elif msg[0] == 'B':                    # Analog input 
+        elif msg[0] == 'B' and msg[1:7] != "":                    # Analog input 
             b = msg[1:7]
             if b == '    --':
                 b = None
             else:
                 b = int(b)/10.0
 
-        elif msg[0] == 'C':                    # Analog input 
+        elif msg[0] == 'C' and msg[1:7] != "":                    # Analog input 
             c = msg[1:7]
             if c == '    --':
                 c = None
@@ -167,66 +167,66 @@ class Station(object):
                 c = int(c)/10.0
             data['pressure'] = c
 
-        elif msg[0] == 'D':                    # Analog input 
+        elif msg[0] == 'D' and msg[1:7] != "":                    # Analog input 
             d = msg[1:7]
             if d == '    --':
                 d = None
             else:
                 d = int(d)/10.0
             data['altimeter'] = d
-            
-        elif msg[0] == 'E':                    # precipitation input
+
+        elif msg[0] == 'E' and msg[1:7] != "":                    # precipitation input
             precipitation = int(msg[1:7])
-            
-        elif msg[0] == 'G':                    # wind speed and direction
-            wind_direction =  int(msg[1:3]) * 10
+
+        elif msg[0] == 'G' and msg[1:7] != "":                    # wind speed and direction
+            wind_direction = int(msg[1:3]) * 10
             wind_speed =  int(msg[3:7])/10.0
             wind = (wind_speed), (wind_direction)
-            
-        elif msg[0] == 'H':                    # wind speed and direction (2 minutes sliding average)
+
+        elif msg[0] == 'H' and msg[1:7] != "":                    # wind speed and direction (2 minutes sliding average)
             wind_direction =  int(msg[1:3]) * 10
             wind_speed =  int(msg[3:7])/10.0
             wind_2min = (wind_speed), (wind_direction)
 
-        elif msg[0] == 'I':                    # wind speed and direction (10 minutes sliding average)
+        elif msg[0] == 'I' and msg[1:7] != "":                    # wind speed and direction (10 minutes sliding average)
             wind_direction =  int(msg[1:3])* 10
             wind_speed =  int(msg[3:7])/10.0
             wind_10min = (wind_speed), (wind_direction )
 
-        elif msg[0] == 'L':                    # Dewpoint temperature
+        elif msg[0] == 'L' and msg[1:7] != "":                    # Dewpoint temperature
             dewpoint = msg[1:7]
             if dewpoint == '    --':
                 dewpoint = None
             else:
                 dewpoint = int(dewpoint)/10.0
 
-        elif msg[0] == 'M':                    # 3hours pressure trend
+        elif msg[0] == 'M' and msg[1:7] != "":                    # 3hours pressure trend
             pressure_3h = int(msg[1:7])/10.0
 
-        elif msg[0] == 'Q':                    # power status in % (0-100% is internal power capacity) if external power supply present value is greater than 100
+        elif msg[0] == 'Q' and msg[1:7] != "":                    # power status in % (0-100% is internal power capacity) if external power supply present value is greater than 100
             power = int(msg[1:7])
 
-        elif msg[0] == 'R':                    # alarm or relay status
+        elif msg[0] == 'R' and msg[1:7] != "":                    # alarm or relay status
             alarm = int(msg[1:7])
 
-        elif msg[0] == 'S':                    # atmospheric stability
+        elif msg[0] == 'S' and msg[1:7] != "":                    # atmospheric stability
             atmosphere_stability = int(msg[1:7])
 
-        elif msg[0] == 'W':                    # WAD software special format
+        elif msg[0] == 'W' and msg[1:7] != "":                    # WAD software special format
             wind_direction = 10*(16*(ord(msg[1]) & 0x0F) + (ord(msg[2]) & 0x0F))
             wind_speed =  256*(16*(ord(msg[3]) & 0x0F) + (ord(msg[4]) & 0x0F)) + 16*(ord(msg[5]) & 0x0F) + (ord(msg[6]) & 0x0F)
             wind_speed_ms = wind_speed / 37.38932004
             data['windSpeed'] = wind_speed_ms
             data['windDir'] = wind_direction
 
-        elif msg[0] == 'X':                    # WAD software special format 2 minutes average
+        elif msg[0] == 'X' and msg[1:7] != "":                    # WAD software special format 2 minutes average
             wind_direction = 10*(16*(ord(msg[1]) & 0x0F) + (ord(msg[2]) & 0x0F))
             wind_speed =  256*(16*(ord(msg[3]) & 0x0F) + (ord(msg[4]) & 0x0F)) + 16*(ord(msg[5]) & 0x0F) + (ord(msg[6]) & 0x0F)
             wind_speed_ms = wind_speed / 37.38932004
             data['windSpeed_2min'] = wind_speed_ms
             data['windDir_2min'] = wind_direction
 
-        elif msg[0] == 'Y':                    # WAD software special format 10 minutes average
+        elif msg[0] == 'Y' and msg[1:7] != "":                    # WAD software special format 10 minutes average
             wind_direction = 10*(16*(ord(msg[1]) & 0x0F) + (ord(msg[2]) & 0x0F))
             wind_speed =  256*(16*(ord(msg[3]) & 0x0F) + (ord(msg[4]) & 0x0F)) + 16*(ord(msg[5]) & 0x0F) + (ord(msg[6]) & 0x0F)
             wind_speed_ms = wind_speed / 37.38932004
