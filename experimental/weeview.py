@@ -66,6 +66,7 @@ class MainForm(npyscreen.SplitForm):
         self.windspeed = self.add(npyscreen.TitleText, name = self.windSpeed +':', value="--", editable=False)
         self.winddir = self.add(npyscreen.TitleText, name = self.winddir +':', value="--", editable=False)
         self.outtemp = self.add(npyscreen.TitleText, name = self.outTemp +':', value="--", editable=False)
+        self.outhumidity = self.add(npyscreen.TitleText, name = self.outHumidity +':', value="--", editable=False)
         self.nextrely = self.get_half_way() +1
         self.messages = self.add(npyscreen.BufferPager, name ='Raw Data',maxlen= 10000, editable=False)
                 
@@ -115,6 +116,11 @@ class MainForm(npyscreen.SplitForm):
             outtemp_data = (self.data['outTemp'], "degree_F",  "group_temperature")
             outtemp_data = weewx.units.ValueHelper(outtemp_data)
             self.outtemp.value = outtemp_data.degree_C
+
+        if 'outHumidity' in self.data:
+            outhumidity_data = (self.data['outHumidity'],"percent", "group_percent")
+            outhumidity_data = weewx.units.ValueHelper(outhumidity_data)
+            self.outhumidity.value = outhumidity_data.percent
 
         if 'dateTime' in self.data:
             self.clock.value = weeutil.weeutil.timestamp_to_gmtime(self.data['dateTime'])
