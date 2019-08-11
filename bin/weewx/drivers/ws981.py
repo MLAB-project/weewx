@@ -143,9 +143,10 @@ class Station(object):
     def parse_readings(msg):
 
         data = dict()
+        msg = msg.strip('\0')
 
         if msg[0] == 'A' and msg[1:7] != "":                    # Analog input 
-            a = msg[1:7]
+            a = msg[1:7].strip('\0')
             if a == '    --':
                 a = None
             else:
@@ -153,14 +154,14 @@ class Station(object):
             data['outTemp'] = a
 
         elif msg[0] == 'B' and msg[1:7] != "":                    # Analog input 
-            b = msg[1:7]
+            b = msg[1:7].strip('\0')
             if b == '    --':
                 b = None
             else:
                 b = int(b)/10.0
 
         elif msg[0] == 'C' and msg[1:7] != "":                    # Analog input 
-            c = msg[1:7]
+            c = msg[1:7].strip('\0')
             if c == '    --':
                 c = None
             else:
@@ -168,7 +169,7 @@ class Station(object):
             data['pressure'] = c
 
         elif msg[0] == 'D' and msg[1:7] != "":                    # Analog input 
-            d = msg[1:7]
+            d = msg[1:7].strip('\0')
             if d == '    --':
                 d = None
             else:
@@ -176,25 +177,25 @@ class Station(object):
             data['altimeter'] = d
 
         elif msg[0] == 'E' and msg[1:7] != "":                    # precipitation input
-            precipitation = int(msg[1:7])
+            precipitation = int(msg[1:7].strip('\0'))
 
         elif msg[0] == 'G' and msg[1:7] != "":                    # wind speed and direction
-            wind_direction = int(msg[1:3]) * 10
-            wind_speed =  int(msg[3:7])/10.0
+            wind_direction = int(msg[1:3].strip('\0')) * 10
+            wind_speed =  int(msg[3:7].strip('\0'))/10.0
             wind = (wind_speed), (wind_direction)
 
         elif msg[0] == 'H' and msg[1:7] != "":                    # wind speed and direction (2 minutes sliding average)
-            wind_direction =  int(msg[1:3]) * 10
-            wind_speed =  int(msg[3:7])/10.0
+            wind_direction =  int(msg[1:3].strip('\0')) * 10
+            wind_speed =  int(msg[3:7].strip('\0'))/10.0
             wind_2min = (wind_speed), (wind_direction)
 
         elif msg[0] == 'I' and msg[1:7] != "":                    # wind speed and direction (10 minutes sliding average)
-            wind_direction =  int(msg[1:3])* 10
-            wind_speed =  int(msg[3:7])/10.0
+            wind_direction =  int(msg[1:3].strip('\0'))* 10
+            wind_speed =  int(msg[3:7].strip('\0'))/10.0
             wind_10min = (wind_speed), (wind_direction )
 
         elif msg[0] == 'L' and msg[1:7] != "":                    # Dewpoint temperature
-            dewpoint = msg[1:7]
+            dewpoint = msg[1:7].strip('\0')
             if dewpoint == '    --':
                 dewpoint = None
             else:
