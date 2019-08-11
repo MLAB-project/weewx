@@ -159,6 +159,7 @@ class Station(object):
                 b = None
             else:
                 b = int(b)/10.0
+            data['outHumidity'] = b
 
         elif msg[0] == 'C' and msg[1:7] != "":                    # Analog input 
             c = msg[1:7].strip('\0')
